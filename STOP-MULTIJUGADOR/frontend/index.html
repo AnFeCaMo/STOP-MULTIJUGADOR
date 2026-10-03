@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STOP Multijugador Web</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Alerta flotante de estado / error -->
+  <div id="toast" class="toast hidden"></div>
+  <div id="badge-espectador" class="badge-espectador hidden" role="status">👀 ESPECTADOR</div>
+  <div id="confirm-stop-modal" class="modal-confirmacion hidden" role="dialog" aria-modal="true" aria-labelledby="titulo-confirmacion-stop">
+    <div class="card modal-contenido">
+      <h2 id="titulo-confirmacion-stop">¿Seguro que quieres terminar la ronda?</h2>
+      <div class="modal-acciones">
+        <button class="btn btn-secundario" onclick="cancelarStop()">CANCELAR</button>
+        <button class="btn btn-stop-confirmar" onclick="confirmarStop()">CONFIRMAR STOP</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Banner de Reconexión -->
+  <div id="banner-reconnect" class="banner-reconnect hidden">
+    <span class="spinner"></span> 🔄 Reconectando...
+  </div>
+
+  <main class="app-container">
+
+    <!-- ==================== PANTALLA 1: LOGIN ==================== -->
+    <section id="pantalla-login" class="pantalla activa">
+      <div class="card login-card">
+        <div class="badge-logo">STOP</div>
+        <h1 class="titulo-principal">STOP MULTIJUGADOR</h1>
+        <p class="subtitulo">Demostración Académica Cliente-Servidor Web</p>
+
+        <form id="form-login" class="form-login" onsubmit="event.preventDefault(); entrarAlJuego();">
+          <label for="input-nombre" class="label-input">Nombre del jugador:</label>
+          <input type="text" id="input-nombre" class="input-texto" placeholder="Ej: Andrés" maxlength="20" autofocus required autocomplete="off">
+          
+          <button type="submit" id="btn-entrar" class="btn btn-primario">
+            <span>ENTRAR A LA SALA</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </form>
+
+        <div class="estado-conexion">
+          <span id="dot-conexion" class="dot-online"></span>
+          <span id="texto-conexion">Servidor disponible</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA 2: SALA DE ESPERA ==================== -->
+    <section id="pantalla-sala" class="pantalla">
+      <header class="header-seccion">
+        <div>
+          <h1 class="titulo-seccion">SALA DE ESPERA</h1>
+          <p class="subtitulo">Esperando jugadores para comenzar la partida...</p>
+        </div>
+        <div class="badge-mi-usuario">
+          <span class="user-avatar" id="avatar-mi-usuario">A</span>
+          <div>
+            <div class="user-nombre" id="label-mi-nombre">Mi Nombre</div>
+            <div class="user-rol" id="label-mi-rol">Jugador</div>
+          </div>
+        </div>
+      </header>
+
+      <div class="layout-dos-columnas">
+        <!-- Lista de Jugadores -->
+        <div class="card panel-jugadores">
+          <div class="panel-header">
+            <h2>Jugadores Conectados <span id="contador-jugadores" class="badge-contador">0</span></h2>
+          </div>
+          <ul id="lista-jugadores-sala" class="lista-jugadores">
+            <!-- Renderizado dinámicamente -->
+          </ul>
+        </div>
+
+        <!-- Panel de Control y Reglas -->
+        <div class="card panel-info">
+          <h2>Información de la Partida</h2>
+          <div class="info-host-box">
+            <span class="corona-icon">👑</span>
+            <div>
+              <span class="info-host-label">Anfitrión actual:</span>
+              <strong id="nombre-anfitrion" class="info-host-nombre">Esperando...</strong>
+            </div>
+          </div>
+
+          <div class="reglas-box">
+            <h3>Reglas del STOP:</h3>
+            <ul>
+              <li>El servidor selecciona la letra para todos al azar.</li>
+              <li>Completa las categorías activas con la letra dada.</li>
+              <li>El primer jugador en terminar presiona <strong>¡STOP!</strong>.</li>
+              <li><strong>10 pts:</strong> Palabra única y válida.</li>
+              <li><strong>5 pts:</strong> Palabra válida pero repetida.</li>
+              <li><strong>0 pts:</strong> Palabra vacía o que no empieza con la letra.</li>
+              <li>Si el sistema reconoce una respuesta, se valida automáticamente.</li>
+              <li>Si no la reconoce pero comienza con la letra, los jugadores la validan por votación.</li>
+            </ul>
+          </div>
+
+          <div id="panel-configuracion-partida" class="reglas-box">
+            <h3>Configuración de partida</h3>
+            <label for="config-rondas">Cantidad de rondas (4–10):</label>
+            <select id="config-rondas" class="input-texto">
+              <option>4</option><option>5</option><option>6</option><option>7</option>
+              <option>8</option><option>9</option><option>10</option>
+            </select>
+            <p id="error-config-rondas" class="texto-aviso hidden" role="alert"></p>
+            <p>Categorías (mínimo 3):</p>
+            <div id="config-categorias" class="config-categorias">
+              <label><input type="checkbox" value="nombre" checked> Nombre</label>
+              <label><input type="checkbox" value="apellido" checked> Apellido</label>
+              <label><input type="checkbox" value="ciudad" checked> Ciudad</label>
+              <label><input type="checkbox" value="fruta" checked> Fruta</label>
+              <label><input type="checkbox" value="animal" checked> Animal</label>
+              <label><input type="checkbox" value="cosa" checked> Cosa</label>
+            </div>
+            <button id="btn-guardar-configuracion" class="btn btn-secundario" type="button" onclick="guardarConfiguracion()">GUARDAR CONFIGURACIÓN</button>
+            <p id="resumen-configuracion" class="texto-muted"></p>
+          </div>
+
+          <div class="acciones-sala">
+            <button id="btn-iniciar-ronda" class="btn btn-primario btn-grande" onclick="iniciarRonda()">
+              <span>INICIAR RONDA</span>
+            </button>
+            <p id="msg-espera-host" class="texto-aviso hidden">Esperando a que el anfitrión inicie la ronda...</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA 3: JUEGO ACTIVO ==================== -->
+    <section id="pantalla-juego" class="pantalla">
+      <header class="header-juego">
+        <div class="header-info-ronda">
+          <span class="badge-ronda" id="badge-ronda-actual">Ronda 1</span>
+          <h1 class="titulo-juego">STOP MULTIJUGADOR</h1>
+        </div>
+
+        <!-- Tarjeta de Letra de la Ronda -->
+        <div class="tarjeta-letra">
+          <span class="letra-label">LETRA</span>
+          <span class="letra-valor" id="letra-ronda">?</span>
+        </div>
+
+        <div class="tarjeta-temporizador" aria-live="polite">
+          <span class="total-label">TIEMPO</span>
+          <span class="temporizador-valor" id="temporizador-ronda">01:30</span>
+        </div>
+
+        <!-- Total acumulado del jugador -->
+        <div class="tarjeta-total-superior">
+          <span class="total-label">MI TOTAL</span>
+          <span class="total-valor" id="total-jugador-juego">0 pts</span>
+        </div>
+      </header>
+
+      <div class="layout-juego">
+        <!-- Formulario de Categorías -->
+        <div class="card panel-formulario">
+          <div class="formulario-grid">
+            <div class="campo-categoria">
+              <label for="cat-nombre">1. Nombre</label>
+              <input type="text" id="cat-nombre" class="input-categoria" placeholder="Escribe un nombre..." autocomplete="off">
+            </div>
+
+            <div class="campo-categoria">
+              <label for="cat-apellido">2. Apellido</label>
+              <input type="text" id="cat-apellido" class="input-categoria" placeholder="Escribe un apellido..." autocomplete="off">
+            </div>
+
+            <div class="campo-categoria">
+              <label for="cat-ciudad">3. Ciudad</label>
+              <input type="text" id="cat-ciudad" class="input-categoria" placeholder="Escribe una ciudad..." autocomplete="off">
+            </div>
+
+            <div class="campo-categoria">
+              <label for="cat-fruta">4. Fruta</label>
+              <input type="text" id="cat-fruta" class="input-categoria" placeholder="Escribe una fruta..." autocomplete="off">
+            </div>
+
+            <div class="campo-categoria">
+              <label for="cat-animal">5. Animal</label>
+              <input type="text" id="cat-animal" class="input-categoria" placeholder="Escribe un animal..." autocomplete="off">
+            </div>
+
+            <div class="campo-categoria">
+              <label for="cat-cosa">6. Cosa</label>
+              <input type="text" id="cat-cosa" class="input-categoria" placeholder="Escribe una cosa u objeto..." autocomplete="off">
+            </div>
+          </div>
+
+          <div class="contenedor-btn-stop">
+            <button id="btn-stop" class="btn btn-stop" onclick="enviarStop()">
+              <span>¡STOP!</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Sidebar de Jugadores en Partida -->
+        <aside class="card sidebar-juego">
+          <h2>Jugadores en Partida</h2>
+          <ul id="lista-jugadores-juego" class="lista-jugadores-simple">
+            <!-- Actualizado dinámicamente -->
+          </ul>
+
+          <div class="historial-resumen-box">
+            <h3>Historial de Rondas</h3>
+            <div id="lista-historial-personal" class="historial-personal-scroll">
+              <p class="texto-muted">Sin rondas finalizadas</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA 4: VOTACIÓN ==================== -->
+    <section id="pantalla-votacion" class="pantalla">
+      <header class="header-resultados">
+        <div>
+          <span class="badge-ronda" id="badge-ronda-votacion">Ronda 1</span>
+          <h1 class="titulo-seccion">VALIDACIÓN DE RESPUESTAS</h1>
+          <p class="subtitulo">Las respuestas conocidas se validan automáticamente. Solo las que no reconoce el sistema, pero comienzan con la letra correcta, pasan a votación.</p>
+        </div>
+        <div class="banner-stop-quien" id="banner-stop-votacion">¡STOP!</div>
+      </header>
+
+      <div class="card panel-jugadores-votacion">
+        <h2>Jugadores y estado</h2>
+        <ul id="lista-jugadores-votacion" class="lista-jugadores-simple"></ul>
+      </div>
+
+      <div id="contenedor-votaciones" class="contenedor-votaciones">
+        <!-- Renderizado dinámicamente -->
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA 5: RESULTADOS ==================== -->
+    <section id="pantalla-resultados" class="pantalla">
+      <header class="header-resultados">
+        <div>
+          <span class="badge-ronda" id="badge-ronda-resultados">Ronda 1</span>
+          <h1 id="titulo-resultados" class="titulo-seccion">RESULTADOS DE LA RONDA</h1>
+        </div>
+        <div class="banner-stop-quien" id="banner-quien-stop">
+          ¡Andrés ha presionado STOP!
+        </div>
+      </header>
+
+      <!-- Tabla de Respuestas y Puntos -->
+      <div class="card tabla-resultados-card">
+        <div class="tabla-scroll">
+          <table class="tabla-stop">
+            <thead>
+              <tr>
+                <th>Jugador</th>
+                <th data-cat="nombre">Nombre</th>
+                <th data-cat="apellido">Apellido</th>
+                <th data-cat="ciudad">Ciudad</th>
+                <th data-cat="fruta">Fruta</th>
+                <th data-cat="animal">Animal</th>
+                <th data-cat="cosa">Cosa</th>
+                <th>Puntos de la ronda</th>
+                <th>Total acumulado</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-resultados">
+              <!-- Renderizado de filas -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Sección Historial Global -->
+      <div class="layout-dos-columnas layout-resultados-inferior">
+        <div class="card panel-historial">
+          <h2>🏆 CLASIFICACIÓN</h2>
+          <div id="contenedor-clasificacion" class="clasificacion-lista">
+            <p class="texto-muted">La clasificación aparecerá al terminar la ronda.</p>
+          </div>
+          <h2 style="margin-top:24px;">HISTORIAL DE LA PARTIDA</h2>
+          <div id="contenedor-historial-completo" class="historial-completo-lista">
+            <!-- Rondas anteriores -->
+          </div>
+        </div>
+
+        <div class="card panel-acciones-resultados">
+          <h2 id="titulo-accion-resultados">Próxima Ronda</h2>
+          <div id="estadisticas-partida" class="hidden">
+            <h3>Estadísticas de la partida</h3>
+            <div id="estadisticas-generales"></div>
+            <h3>Estadísticas por jugador</h3>
+            <div id="estadisticas-jugadores"></div>
+          </div>
+          <p class="subtitulo">Los puntos anteriores se conservan acumulados en tu total.</p>
+          <div class="caja-mi-total">
+            <span>Tu Total Acumulado:</span>
+            <strong id="label-mi-total-resultados" class="texto-oro">0 pts</strong>
+          </div>
+
+          <div class="acciones-sala">
+            <button id="btn-nueva-ronda" class="btn btn-primario btn-grande" onclick="accionResultados()">
+              <span>INICIAR SIGUIENTE RONDA</span>
+            </button>
+            <p id="msg-espera-host-nueva" class="texto-aviso hidden">Esperando a que el anfitrión inicie la siguiente ronda...</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- CRÉDITO OBLIGATORIO: Visible en todas las pantallas en la esquina inferior derecha -->
+  <footer class="creditos-footer">
+    Desarrollado por el Ing. Andrés Camacho y la Ing. Yulesi Carraza
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
