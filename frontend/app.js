@@ -1,5 +1,40 @@
 // ==================== CONFIGURACIÓN Y ESTADO ====================
 const CATEGORIAS = ["nombre", "apellido", "ciudad", "fruta", "animal", "cosa"];
+const AVATARES = [
+  { id: "oso", emoji: "🐻", nombre: "Oso" },
+  { id: "gallina", emoji: "🐔", nombre: "Gallina" },
+  { id: "gato", emoji: "🐱", nombre: "Gato" },
+  { id: "perro", emoji: "🐶", nombre: "Perro" },
+  { id: "mono", emoji: "🐵", nombre: "Mono" },
+  { id: "zorro", emoji: "🦊", nombre: "Zorro" },
+  { id: "rana", emoji: "🐸", nombre: "Rana" },
+  { id: "panda", emoji: "🐼", nombre: "Panda" },
+  { id: "koala", emoji: "🐨", nombre: "Koala" },
+  { id: "tigre", emoji: "🐯", nombre: "Tigre" },
+  { id: "leon", emoji: "🦁", nombre: "León" },
+  { id: "conejo", emoji: "🐰", nombre: "Conejo" },
+  { id: "cerdo", emoji: "🐷", nombre: "Cerdo" },
+  { id: "vaca", emoji: "🐮", nombre: "Vaca" },
+  { id: "pinguino", emoji: "🐧", nombre: "Pingüino" },
+  { id: "unicornio", emoji: "🦄", nombre: "Unicornio" },
+  { id: "robot", emoji: "🤖", nombre: "Robot" },
+  { id: "alien", emoji: "👽", nombre: "Alien" },
+  { id: "videojuego", emoji: "👾", nombre: "Videojuego" },
+  { id: "fantasma", emoji: "👻", nombre: "Fantasma" },
+  { id: "calabaza", emoji: "🎃", nombre: "Calabaza" }
+];
+const REACCIONES = [
+  { id: "jaja", texto: "😂 JAJA" },
+  { id: "facil", texto: "😎 Fácil" },
+  { id: "te_gane", texto: "😏 Te gané" },
+  { id: "vamos", texto: "🔥 ¡Vamos!" },
+  { id: "bien_jugado", texto: "👏 Bien jugado" },
+  { id: "que_paso", texto: "😱 ¿Qué pasó?" },
+  { id: "no_puede_ser", texto: "😭 No puede ser" },
+  { id: "pensando", texto: "🤔 Estoy pensando" },
+  { id: "ganamos", texto: "🥳 ¡Ganamos!" },
+  { id: "buena_partida", texto: "❤️ Buena partida" }
+];
 let categoriasActivas = [...CATEGORIAS];
 const ETIQUETAS_CATEGORIA = { nombre: "Nombre", apellido: "Apellido", ciudad: "Ciudad", fruta: "Fruta", animal: "Animal", cosa: "Cosa" };
 
@@ -7,6 +42,7 @@ let socket = null;
 let reconectarInterval = null;
 let tokenSesion = localStorage.getItem("stop_token") || "";
 let nombreGuardado = localStorage.getItem("stop_nombre") || "";
+let avatarSeleccionado = localStorage.getItem("stop_avatar") || "oso";
 let reconectando = false;
 let sesionReemplazada = false;
 let miId = null;
@@ -16,8 +52,26 @@ let esEspectador = false;
 let estadoJuego = "LOGIN"; // LOGIN, SALA, JUEGO, VOTACION, RESULTADOS
 let debounceRespuestasTimer = null;
 let temporizadorVisual = null;
+let tiempoAgotadoNotificado = false;
+let temporizadorAnimacionLetra = null;
+let animacionLetraId = 0;
+let ultimaAnimacionLetra = null;
 let sonidoActivado = localStorage.getItem("stop_sonido") !== "0";
+let musicaActivada = localStorage.getItem("stop_musica") === "1";
+let volumenAudio = Number(localStorage.getItem("stop_volumen_audio") ?? "0.35");
+if (!Number.isFinite(volumenAudio)) volumenAudio = 0.35;
+volumenAudio = Math.min(1, Math.max(0, volumenAudio));
 let audioContext = null;
+let gananciaMusica = null;
+let osciladoresMusica = [];
+let intervaloMusica = null;
+let toastTimeout = null;
+let rondaConEfectoStop = null;
+let rondaConSonidoVotacion = null;
+let rondaConSonidoResultados = null;
+let ultimaAnimacionPuntaje = null;
+let temporizadoresResultado = [];
+const eventosConfeti = new Set();
 
 // Elementos DOM principales
 const toastEl = document.getElementById("toast");
@@ -44,7 +98,6 @@ function inicializarWebSocket() {
       dotConexion.className = "dot-online";
       textoConexion.textContent = "Conectado al servidor";
     }
-    bannerReconnect.classList.add("hidden");
 
     if (reconectarInterval) {
       clearInterval(reconectarInterval);
@@ -52,7 +105,19 @@ function inicializarWebSocket() {
     }
 
     if (tokenSesion && nombreGuardado) {
-      enviarMensaje({ tipo: "conexion", nombre: nombreGuardado, token: tokenSesion });
+      const codigoSalaGuardado = localStorage.getItem("stop_codigo_sala") || "7K4P";
+      enviarMensaje({ tipo: "estado_reconexion", token: tokenSesion, codigo_sala: codigoSalaGuardado });
+      enviarMensaje({
+        tipo: "conexion",
+        nombre: nombreGuardado,
+        token: tokenSesion,
+        avatar: avatarSeleccionado,
+        accion_sala: "unir",
+        codigo_sala: codigoSalaGuardado,
+      });
+    } else {
+      bannerReconnect.classList.add("hidden");
+      reconectando = false;
     }
   };
 
@@ -76,6 +141,7 @@ function inicializarWebSocket() {
 
     if (evento.code === 4001) {
       sesionReemplazada = true;
+      reconectando = false;
       textoConexion.textContent = "Sesión activa en otra pestaña";
       bannerReconnect.classList.add("hidden");
       return;
@@ -113,6 +179,23 @@ function manejarMensajeServidor(msg) {
   switch (tipo) {
     case "error":
       mostrarToast(msg.mensaje || "Ocurrió un error", "error");
+      if (reconectando) {
+        reconectando = false;
+        bannerReconnect.classList.add("hidden");
+        if (textoConexion) textoConexion.textContent = "Conexión disponible; revisa el mensaje";
+      }
+      break;
+
+    case "notificacion":
+      if (["entrada", "salida", "reconexion"].includes(msg.evento)) {
+        mostrarNotificacionJugador(msg);
+      } else {
+        mostrarToast(msg.mensaje || "Actualización de la sala.", msg.estado || "info");
+      }
+      break;
+
+    case "reaccion":
+      mostrarReaccion(msg);
       break;
 
     case "bienvenida":
@@ -120,8 +203,15 @@ function manejarMensajeServidor(msg) {
       miNombre = msg.nombre;
       tokenSesion = msg.token || tokenSesion;
       nombreGuardado = miNombre;
+      if (msg.codigo_sala) {
+        localStorage.setItem("stop_codigo_sala", msg.codigo_sala);
+        const codigoSalaEl = document.getElementById("codigo-sala-activo");
+        if (codigoSalaEl) codigoSalaEl.textContent = msg.codigo_sala;
+      }
+      avatarSeleccionado = AVATARES.some((avatar) => avatar.id === msg.avatar) ? msg.avatar : "oso";
       localStorage.setItem("stop_token", tokenSesion);
       localStorage.setItem("stop_nombre", nombreGuardado);
+      localStorage.setItem("stop_avatar", avatarSeleccionado);
       esAnfitrion = !!msg.es_anfitrion;
       esEspectador = !!msg.es_espectador;
       actualizarInfoUsuario();
@@ -129,38 +219,46 @@ function manejarMensajeServidor(msg) {
         if (textoConexion) textoConexion.textContent = "✅ Conexión recuperada";
         mostrarToast("✅ Conexión recuperada", "success");
       }
+      bannerReconnect.classList.add("hidden");
       reconectando = false;
       break;
 
     case "sala":
+      limpiarPerfilesTemporales();
+      eventosConfeti.clear();
       actualizarSala(msg);
       break;
 
     case "ronda":
       reproducirSonido("ronda");
-      mostrarEfectoRonda(msg);
       iniciarPantallaJuego(msg);
       actualizarJugadoresEnPartida(msg.jugadores || [], msg.espectadores || []);
+      renderizarPerfilTemporal(msg);
       break;
 
     case "jugadores":
       actualizarJugadoresEnPartida(msg.jugadores || [], msg.espectadores || []);
+      renderizarPerfilTemporal(msg);
       break;
 
     case "votacion":
       detenerTemporizadorVisual();
+      cancelarAnimacionLetra();
       bloquearCamposRonda();
-      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador");
-      else reproducirSonido("tiempo");
+      if (estadoJuego !== "VOTACION") reproducirSonido("votacion");
+      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador", msg.stopper_id, msg.ronda);
+      else if (!tiempoAgotadoNotificado) reproducirSonido("tiempo");
       mostrarPantallaVotacion(msg);
       break;
 
     case "resultados":
       detenerTemporizadorVisual();
+      cancelarAnimacionLetra();
       bloquearCamposRonda();
-      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador");
-      else reproducirSonido("tiempo");
-      mostrarPantallaResultados(msg);
+      if (estadoJuego !== "RESULTADOS") window.setTimeout(() => reproducirSonido("resultados"), 300);
+      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador", msg.stopper_id, msg.ronda);
+      else if (!tiempoAgotadoNotificado) reproducirSonido("tiempo");
+      mostrarPantallaResultados(msg, estadoJuego !== "RESULTADOS");
       break;
 
     default:
@@ -170,7 +268,6 @@ function manejarMensajeServidor(msg) {
 
 // ==================== ANIMACIONES Y SONIDO ====================
 function obtenerAudioContext() {
-  if (!sonidoActivado) return null;
   try {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
     if (audioContext.state === "suspended") audioContext.resume();
@@ -179,24 +276,34 @@ function obtenerAudioContext() {
 }
 
 function reproducirSonido(tipo) {
+  if (!sonidoActivado || volumenAudio === 0) return;
   const ctx = obtenerAudioContext();
   if (!ctx) return;
   const patrones = {
     tic: [[620, 0.04, 0.035]],
+    suspenso: [[740, 0.08, 0.045], [620, 0.11, 0.06]],
     ronda: [[440, 0.07, 0.06], [660, 0.08, 0.07], [880, 0.12, 0.08]],
     stop: [[220, 0.08, 0.08], [110, 0.16, 0.12]],
+    alerta: [[880, 0.09, 0.07], [660, 0.12, 0.08]],
+    impacto: [[90, 0.12, 0.16], [55, 0.2, 0.12]],
     tiempo: [[180, 0.16, 0.1], [120, 0.2, 0.12]],
+    votacion: [[523, 0.08, 0.045], [659, 0.11, 0.055]],
+    resultados: [[392, 0.1, 0.045], [494, 0.14, 0.05]],
     ganador: [[523, 0.08, 0.07], [659, 0.08, 0.07], [784, 0.16, 0.1], [1047, 0.25, 0.12]],
+    derrota: [[294, 0.12, 0.055], [220, 0.16, 0.06], [196, 0.22, 0.05]],
+    logro: [[784, 0.07, 0.055], [988, 0.09, 0.06], [1175, 0.16, 0.07]],
     punto: [[740, 0.07, 0.04]]
   };
+  if (!patrones[tipo]) return;
   let retraso = 0;
   (patrones[tipo] || []).forEach(([frecuencia, duracion, volumen]) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = tipo === "stop" ? "sawtooth" : "sine";
+    osc.type = ["stop", "impacto"].includes(tipo) ? "sawtooth" : "sine";
     osc.frequency.value = frecuencia;
+    const volumenFinal = Math.max(0.0001, volumen * volumenAudio);
     gain.gain.setValueAtTime(0.0001, ctx.currentTime + retraso);
-    gain.gain.exponentialRampToValueAtTime(volumen, ctx.currentTime + retraso + 0.01);
+    gain.gain.exponentialRampToValueAtTime(volumenFinal, ctx.currentTime + retraso + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + retraso + duracion);
     osc.connect(gain).connect(ctx.destination);
     osc.start(ctx.currentTime + retraso);
@@ -216,6 +323,90 @@ function alternarSonido() {
   if (sonidoActivado) reproducirSonido("punto");
 }
 
+function alternarMusica() {
+  musicaActivada = !musicaActivada;
+  localStorage.setItem("stop_musica", musicaActivada ? "1" : "0");
+  actualizarControlMusica();
+  if (musicaActivada) iniciarMusicaConcentracion();
+  else detenerMusicaConcentracion();
+}
+
+function actualizarControlMusica() {
+  const boton = document.getElementById("btn-musica");
+  if (!boton) return;
+  boton.textContent = musicaActivada ? "🎵 Música activada" : "🎵 Música desactivada";
+  boton.setAttribute("aria-pressed", String(musicaActivada));
+}
+
+function actualizarVolumenAudio(valor) {
+  volumenAudio = Math.min(1, Math.max(0, Number(valor) / 100));
+  localStorage.setItem("stop_volumen_audio", String(volumenAudio));
+  if (gananciaMusica && audioContext) {
+    gananciaMusica.gain.setTargetAtTime(volumenAudio * 0.12, audioContext.currentTime, 0.12);
+  }
+}
+
+function iniciarMusicaConcentracion() {
+  if (!musicaActivada || osciladoresMusica.length) return;
+  if (!window.AudioContext && !window.webkitAudioContext) {
+    musicaActivada = false;
+    localStorage.setItem("stop_musica", "0");
+    actualizarControlMusica();
+    mostrarToast("Este navegador no admite música Web Audio.", "error");
+    return;
+  }
+  const ctx = obtenerAudioContext();
+  if (!ctx) {
+    musicaActivada = false;
+    localStorage.setItem("stop_musica", "0");
+    actualizarControlMusica();
+    mostrarToast("No se pudo activar la música.", "error");
+    return;
+  }
+
+  gananciaMusica = ctx.createGain();
+  gananciaMusica.gain.setValueAtTime(0, ctx.currentTime);
+  gananciaMusica.gain.setTargetAtTime(volumenAudio * 0.12, ctx.currentTime, 0.8);
+  gananciaMusica.connect(ctx.destination);
+  osciladoresMusica = [0, 1, 2].map(() => {
+    const oscilador = ctx.createOscillator();
+    const ganancia = ctx.createGain();
+    oscilador.type = "sine";
+    ganancia.gain.value = 0.035;
+    oscilador.connect(ganancia).connect(gananciaMusica);
+    oscilador.start();
+    return oscilador;
+  });
+
+  const acordes = [
+    [130.81, 164.81, 196],
+    [110, 130.81, 164.81],
+    [98, 123.47, 146.83],
+    [123.47, 146.83, 185]
+  ];
+  let indiceAcorde = 0;
+  const aplicarAcorde = () => {
+    acordes[indiceAcorde].forEach((frecuencia, indice) => {
+      osciladoresMusica[indice].frequency.setTargetAtTime(frecuencia, ctx.currentTime, 1.5);
+    });
+    indiceAcorde = (indiceAcorde + 1) % acordes.length;
+  };
+  aplicarAcorde();
+  intervaloMusica = window.setInterval(aplicarAcorde, 6000);
+}
+
+function detenerMusicaConcentracion() {
+  if (intervaloMusica) window.clearInterval(intervaloMusica);
+  intervaloMusica = null;
+  osciladoresMusica.forEach((oscilador) => {
+    oscilador.stop();
+    oscilador.disconnect();
+  });
+  osciladoresMusica = [];
+  if (gananciaMusica) gananciaMusica.disconnect();
+  gananciaMusica = null;
+}
+
 function mostrarEfectoJuego(emoji, titulo, subtitulo, clase = "") {
   const overlay = document.getElementById("efecto-juego");
   const emojiEl = document.getElementById("efecto-emoji");
@@ -232,17 +423,31 @@ function mostrarEfectoJuego(emoji, titulo, subtitulo, clase = "") {
   overlay._timer = setTimeout(() => overlay.classList.remove("visible"), clase.includes("stop") ? 1500 : 1800);
 }
 
-function mostrarEfectoStop(nombre) {
-  reproducirSonido("stop");
-  mostrarEfectoJuego("😂", "¡STOP!", `${nombre} ha terminado la ronda`, "efecto-stop");
+function mostrarEfectoStop(nombre, jugadorId, ronda) {
+  const claveRonda = `${ronda}:${nombre}`;
+  if (rondaConEfectoStop === claveRonda) return;
+  rondaConEfectoStop = claveRonda;
+  reproducirSonido("alerta");
+  window.setTimeout(() => reproducirSonido("impacto"), 100);
+  const avatar = document.querySelector(`.avatar-animado[data-player-id="${Number(jugadorId)}"]`);
+  if (avatar) {
+    avatar.classList.remove("avatar-stop-salto");
+    void avatar.offsetWidth;
+    avatar.classList.add("avatar-stop-salto");
+    window.setTimeout(() => avatar.classList.remove("avatar-stop-salto"), 900);
+  }
+  mostrarEfectoJuego("💥", "💥 STOP 💥", `😂 ¡${nombre.toLocaleUpperCase("es-CO")} DIJO STOP!`, "efecto-stop");
 }
 
 function mostrarEfectoRonda(msg) {
+  rondaConEfectoStop = null;
   const letra = msg.letra || "?";
   mostrarEfectoJuego("✋", `¡LETRA ${letra}!`, "Prepárate... comienza la ronda", "efecto-ronda");
 }
 
-function lanzarConfeti() {
+function lanzarConfeti(claveEvento = "celebracion") {
+  if (eventosConfeti.has(claveEvento)) return;
+  eventosConfeti.add(claveEvento);
   const contenedor = document.createElement("div");
   contenedor.className = "confeti-contenedor";
   for (let i = 0; i < 42; i += 1) {
@@ -258,12 +463,43 @@ function lanzarConfeti() {
 }
 
 function animarPuntos() {
-  document.querySelectorAll(".pts-ronda-badge").forEach((el, indice) => {
+  document.querySelectorAll(".pts-ronda-badge[data-player-id]").forEach((el, indice) => {
     setTimeout(() => {
+      const puntos = Number(el.dataset.puntos);
+      if (!Number.isFinite(puntos) || puntos <= 0) return;
       el.classList.add("puntos-entra");
+      const jugadorId = Number(el.dataset.playerId);
+      const destino = Number.isInteger(jugadorId)
+        ? document.querySelector(`.item-clasificacion[data-player-id="${jugadorId}"] .pts-total-badge`)
+        : null;
+      if (puntos > 0 && destino) animarPuntosAlMarcador(el, destino, puntos);
       reproducirSonido("punto");
     }, indice * 100);
   });
+}
+
+function animarPuntosAlMarcador(origen, destino, puntos) {
+  const inicio = origen.getBoundingClientRect();
+  const final = destino.getBoundingClientRect();
+  if (!inicio.width || !final.width) return;
+
+  const vuelo = document.createElement("span");
+  vuelo.className = "puntos-volando";
+  vuelo.textContent = `⬆️ +${puntos}`;
+  vuelo.setAttribute("aria-hidden", "true");
+  vuelo.style.left = `${inicio.left + inicio.width / 2}px`;
+  vuelo.style.top = `${inicio.top + inicio.height / 2}px`;
+  document.body.appendChild(vuelo);
+
+  window.requestAnimationFrame(() => {
+    vuelo.style.transform = `translate(${final.left + final.width / 2 - inicio.left - inicio.width / 2}px, ${final.top + final.height / 2 - inicio.top - inicio.height / 2}px) scale(.55)`;
+    vuelo.style.opacity = "0";
+    destino.classList.add("puntos-recibe");
+  });
+  window.setTimeout(() => {
+    vuelo.remove();
+    destino.classList.remove("puntos-recibe");
+  }, 780);
 }
 
 // ==================== TRANSICIÓN DE PANTALLAS ====================
@@ -289,17 +525,122 @@ function cambiarPantalla(nuevaPantalla) {
 function entrarAlJuego() {
   const input = document.getElementById("input-nombre");
   const nombre = input.value.trim();
+  const accionSala = document.getElementById("accion-sala")?.value || "crear";
+  const codigoSala = document.getElementById("input-codigo-sala")?.value.trim().toUpperCase() || "";
 
   if (!nombre) {
     mostrarToast("El nombre es obligatorio.", "error");
     return;
   }
 
+  if (accionSala === "unir" && !/^[A-HJ-NP-Z2-9]{4}$/.test(codigoSala)) {
+    mostrarToast("Ingresa un código de sala válido de 4 caracteres.", "error");
+    return;
+  }
+
+  const tokenParaSala = accionSala === "unir"
+    && codigoSala === localStorage.getItem("stop_codigo_sala")
+    ? tokenSesion
+    : "";
   enviarMensaje({
     tipo: "conexion",
     nombre,
-    ...(tokenSesion ? { token: tokenSesion } : {}),
+    avatar: avatarSeleccionado,
+    accion_sala: accionSala,
+    codigo_sala: accionSala === "unir" ? codigoSala : "",
+    ...(tokenParaSala ? { token: tokenParaSala } : {}),
   });
+}
+
+function actualizarCamposCodigoSala() {
+  const selector = document.getElementById("accion-sala");
+  const campo = document.getElementById("campo-codigo-sala");
+  const codigo = document.getElementById("input-codigo-sala");
+  const unirse = selector?.value === "unir";
+  campo?.classList.toggle("hidden", !unirse);
+  if (codigo) codigo.required = !!unirse;
+}
+
+function alternarCamposCodigoSala() {
+  const selector = document.getElementById("accion-sala");
+  selector?.addEventListener("change", actualizarCamposCodigoSala);
+  actualizarCamposCodigoSala();
+}
+
+function seleccionarAvatar(avatarId) {
+  if (!AVATARES.some((avatar) => avatar.id === avatarId)) return;
+  avatarSeleccionado = avatarId;
+  localStorage.setItem("stop_avatar", avatarId);
+  document.querySelectorAll(".opcion-avatar").forEach((boton) => {
+    boton.setAttribute("aria-pressed", String(boton.dataset.avatar === avatarSeleccionado));
+  });
+  actualizarInfoUsuario();
+}
+
+function renderizarAvatar(emoji, clase = "avatar-jugador", jugadorId = null) {
+  const avatar = AVATARES.find((opcion) => opcion.emoji === emoji) || AVATARES[0];
+  const atributoJugador = Number.isInteger(jugadorId) ? ` data-player-id="${jugadorId}"` : "";
+  return `<span class="${clase} avatar-animado" data-avatar="${avatar.id}"${atributoJugador} aria-hidden="true">${avatar.emoji}</span>`;
+}
+
+function renderizarEmocion(emocion) {
+  const emocionesPermitidas = new Set(["😎", "🤔", "😱", "🥳", "😭", "🔥", "🏆", "😴", "🔄", "👀"]);
+  if (!emocionesPermitidas.has(emocion)) return "";
+  return `<span class="emocion-automatica" aria-label="Emoción ${emocion}">${emocion}</span>`;
+}
+
+function renderizarSelectorAvatares() {
+  const contenedor = document.getElementById("opciones-avatares");
+  if (!contenedor) return;
+  if (!AVATARES.some((avatar) => avatar.id === avatarSeleccionado)) avatarSeleccionado = "oso";
+  contenedor.replaceChildren();
+  AVATARES.forEach((avatar) => {
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "opcion-avatar";
+    boton.dataset.avatar = avatar.id;
+    boton.textContent = avatar.emoji;
+    boton.title = avatar.nombre;
+    boton.setAttribute("aria-label", avatar.nombre);
+    boton.setAttribute("aria-pressed", String(avatar.id === avatarSeleccionado));
+    boton.addEventListener("click", () => seleccionarAvatar(avatar.id));
+    contenedor.appendChild(boton);
+  });
+}
+
+function renderizarReacciones() {
+  const contenedor = document.getElementById("botones-reacciones");
+  if (!contenedor) return;
+  contenedor.replaceChildren();
+  REACCIONES.forEach((reaccion) => {
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "boton-reaccion";
+    boton.dataset.reaccion = reaccion.id;
+    boton.textContent = reaccion.texto;
+    boton.addEventListener("click", () => enviarReaccion(reaccion.id));
+    contenedor.appendChild(boton);
+  });
+}
+
+function enviarReaccion(reaccion) {
+  if (!REACCIONES.some((opcion) => opcion.id === reaccion)) return;
+  enviarMensaje({ tipo: "reaccion", reaccion });
+}
+
+function mostrarReaccion(mensaje) {
+  const contenedor = document.getElementById("reacciones-flotantes");
+  if (!contenedor || !REACCIONES.some((opcion) => opcion.id === mensaje.reaccion)) return;
+  const reaccion = REACCIONES.find((opcion) => opcion.id === mensaje.reaccion);
+  const burbuja = document.createElement("div");
+  burbuja.className = "reaccion-flotante";
+  burbuja.textContent = `${mensaje.avatar || "🐻"} ${mensaje.nombre || "Jugador"}: ${reaccion.texto}`;
+  contenedor.appendChild(burbuja);
+  while (contenedor.children.length > 5) contenedor.firstElementChild.remove();
+  window.setTimeout(() => {
+    burbuja.classList.add("saliendo");
+    window.setTimeout(() => burbuja.remove(), 220);
+  }, 3000);
 }
 
 function iniciarRonda() {
@@ -370,7 +711,13 @@ function actualizarInfoUsuario() {
 
   if (labelNombre) labelNombre.textContent = miNombre;
   if (labelRol) labelRol.textContent = esEspectador ? "👀 ESPECTADOR" : esAnfitrion ? "👑 Anfitrión" : "Jugador";
-  if (avatar) avatar.textContent = miNombre.charAt(0).toUpperCase();
+  if (avatar) {
+    const seleccionado = AVATARES.find((opcion) => opcion.id === avatarSeleccionado);
+    avatar.textContent = seleccionado ? seleccionado.emoji : "🐻";
+    avatar.setAttribute("aria-label", seleccionado ? seleccionado.nombre : "Oso");
+    avatar.dataset.avatar = seleccionado ? seleccionado.id : "oso";
+    avatar.classList.add("avatar-animado");
+  }
   const badgeEspectador = document.getElementById("badge-espectador");
   if (badgeEspectador) badgeEspectador.classList.toggle("hidden", !esEspectador);
 }
@@ -401,7 +748,9 @@ function actualizarSala(msg) {
       li.innerHTML = `
         <div class="jugador-info-izq">
           <span class="${j.conectado === false ? "dot-desconectado" : "dot-verde"}">●</span>
-          <span>${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}${j.conectado === false ? " · Desconectado" : ""}</span>
+          ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}
+          ${renderizarEmocion(j.emocion)}
+          <span>${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""} · ${escaparHtml(j.estado_presencia || (j.conectado === false ? "🔴 Desconectado" : "🟢 Conectado"))}</span>
           ${j.es_anfitrion ? '<span class="badge-host">👑 Anfitrión</span>' : ""}
         </div>
         <div class="pts-total-badge">${j.total || 0} pts</div>
@@ -493,10 +842,10 @@ function actualizarJugadoresEnPartida(jugadores, espectadores = []) {
     li.className = "item-jugador-simple";
     const etiquetaYo = j.id === miId ? " (TÚ)" : "";
     const host = j.es_anfitrion ? " 👑" : "";
-    const estado = j.estado || `${j.total || 0} pts`;
+    const estado = j.estado_presencia || j.estado || `${j.total || 0} pts`;
     const desconectado = j.conectado === false;
     li.innerHTML = `
-      <span>${escaparHtml(j.nombre)}${etiquetaYo}${host}${desconectado ? " · Desconectado" : ""}</span>
+      <span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${etiquetaYo}${host}${desconectado ? " · Desconectado" : ""}</span>
       <strong class="${desconectado ? "texto-muted" : "puntos-verde"}">${escaparHtml(estado)}</strong>
     `;
     lista.appendChild(li);
@@ -504,18 +853,19 @@ function actualizarJugadoresEnPartida(jugadores, espectadores = []) {
   espectadores.forEach((e) => {
     const li = document.createElement("li");
     li.className = "item-jugador-simple";
-    li.innerHTML = `<span>👀 ${escaparHtml(e.nombre)}</span><strong class="texto-muted">Espectador</strong>`;
+    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id)}${renderizarEmocion(e.emocion)}${escaparHtml(e.nombre)}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
     lista.appendChild(li);
   });
 }
 
 function iniciarPantallaJuego(msg) {
+  const yaEstabaEnJuego = estadoJuego === "JUEGO";
   if (msg.categorias) categoriasActivas = msg.categorias;
   actualizarVisibilidadCategorias();
   const letra = msg.letra || "?";
   const numRonda = msg.ronda || 1;
 
-  document.getElementById("letra-ronda").textContent = letra;
+  document.getElementById("letra-ronda").textContent = "?";
   document.getElementById("badge-ronda-actual").textContent = `Ronda ${numRonda}`;
   if (msg.anfitrion_id !== undefined) esAnfitrion = msg.anfitrion_id === miId;
   if (msg.espectador !== undefined) esEspectador = !!msg.espectador;
@@ -545,11 +895,58 @@ function iniciarPantallaJuego(msg) {
   if (primerInput) {
     if (!esEspectador) setTimeout(() => primerInput.focus(), 150);
   }
+  const claveAnimacion = `${numRonda}:${letra}`;
+  if (!yaEstabaEnJuego || ultimaAnimacionLetra !== claveAnimacion) {
+    ultimaAnimacionLetra = claveAnimacion;
+    animarLetraRonda(letra, numRonda, () => mostrarEfectoRonda(msg));
+  }
+}
+
+function cancelarAnimacionLetra() {
+  animacionLetraId += 1;
+  if (temporizadorAnimacionLetra) clearTimeout(temporizadorAnimacionLetra);
+  temporizadorAnimacionLetra = null;
+  document.getElementById("letra-ronda")?.classList.remove("letra-animando");
+}
+
+function animarLetraRonda(letra, ronda, alFinalizar) {
+  cancelarAnimacionLetra();
+  const idAnimacion = animacionLetraId;
+  const etiqueta = document.getElementById("letra-ronda");
+  const letraFinal = String(letra || "?").toLocaleUpperCase("es-CO");
+  const alfabeto = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const secuencia = Array.from({ length: 4 }, () => alfabeto[Math.floor(Math.random() * alfabeto.length)]);
+  secuencia.push(letraFinal);
+  let indice = 0;
+
+  const avanzar = () => {
+    if (idAnimacion !== animacionLetraId) return;
+    if (etiqueta) {
+      etiqueta.textContent = secuencia[indice];
+      if (indice === secuencia.length - 1) etiqueta.setAttribute("aria-label", `Letra ${letraFinal} de la ronda ${ronda}`);
+      etiqueta.classList.remove("letra-animando");
+      void etiqueta.offsetWidth;
+      etiqueta.classList.add("letra-animando");
+    }
+    indice += 1;
+    if (indice < secuencia.length) {
+      temporizadorAnimacionLetra = setTimeout(avanzar, 65);
+      return;
+    }
+    temporizadorAnimacionLetra = null;
+    setTimeout(() => etiqueta?.classList.remove("letra-animando"), 160);
+    if (idAnimacion === animacionLetraId) alFinalizar();
+  };
+
+  temporizadorAnimacionLetra = setTimeout(avanzar, 45);
 }
 
 function iniciarTemporizadorVisual(venceEn, servidorAhora) {
   detenerTemporizadorVisual();
+  tiempoAgotadoNotificado = false;
   const etiqueta = document.getElementById("temporizador-ronda");
+  const aviso = document.getElementById("aviso-temporizador");
+  const cuentaRegresiva = document.getElementById("cuenta-regresiva");
   const diferenciaReloj = Number(servidorAhora) * 1000 - Date.now();
   let ultimoSegundo = null;
   const actualizar = () => {
@@ -559,7 +956,22 @@ function iniciarTemporizadorVisual(venceEn, servidorAhora) {
       etiqueta.classList.toggle("tiempo-agotado", segundos === 0);
       etiqueta.classList.toggle("tiempo-critico", segundos <= 10 && segundos > 0);
     }
-    if (segundos !== ultimoSegundo && segundos <= 5 && segundos > 0) reproducirSonido("tic");
+    if (aviso) {
+      aviso.textContent = segundos <= 10 && segundos > 0 ? "⚠️" : "";
+      aviso.classList.toggle("hidden", segundos > 10 || segundos === 0);
+    }
+    if (cuentaRegresiva) {
+      cuentaRegresiva.textContent = segundos <= 5 && segundos > 0 ? String(segundos) : "";
+      cuentaRegresiva.classList.toggle("hidden", segundos > 5 || segundos === 0);
+    }
+    if (segundos !== ultimoSegundo && segundos <= 5 && segundos > 0) reproducirSonido("suspenso");
+    if (segundos === 0 && !tiempoAgotadoNotificado) {
+      tiempoAgotadoNotificado = true;
+      if (aviso) aviso.classList.add("hidden");
+      if (cuentaRegresiva) cuentaRegresiva.classList.add("hidden");
+      reproducirSonido("tiempo");
+      mostrarEfectoJuego("💥", "💥 ¡TIEMPO!", "", "efecto-tiempo");
+    }
     ultimoSegundo = segundos;
   };
   actualizar();
@@ -580,6 +992,13 @@ function bloquearCamposRonda(bloquear = true) {
   if (boton) boton.disabled = bloquear;
 }
 
+function etiquetaResultadoRespuesta(detalle, puntos) {
+  if (["valida_repetida", "votada_repetida"].includes(detalle.estado)) {
+    return `⚠️ Repetida +${puntos}`;
+  }
+  if (puntos > 0) return `✅ Correcta +${puntos}`;
+  return "❌ No válida +0";
+}
 
 function mostrarPantallaVotacion(msg) {
   const contenedor = document.getElementById("contenedor-votaciones");
@@ -608,16 +1027,16 @@ function mostrarPantallaVotacion(msg) {
     const autores = (candidato.autores || []).map(escaparHtml).join(", ");
     const puedeVotar = !!candidato.puede_votar;
     const total = candidato.total_votantes || 0;
-    const votos = `${candidato.votos_si || 0} SÍ · ${candidato.votos_no || 0} NO · ${total} votantes`;
+    const votos = `SÍ: ${candidato.votos_si || 0} · NO: ${candidato.votos_no || 0} · ${total} votantes`;
 
     card.innerHTML = `
       <div class="votacion-cabecera">
         <div>
           <span class="badge-categoria-votacion">${ETIQUETAS_CATEGORIA[candidato.categoria] || candidato.categoria}</span>
           <h2>"${escaparHtml(candidato.respuesta)}"</h2>
-          <p class="texto-muted">Respuesta de: ${autores}</p>
+          <p class="texto-muted">¿Aceptar esta respuesta? · De: ${autores}</p>
         </div>
-        <div class="contador-votos">${votos}</div>
+        <div class="contador-votos">🗳️ ${votos}</div>
       </div>
       <div class="votacion-acciones">
         ${candidato.cerrada
@@ -652,13 +1071,15 @@ function actualizarJugadoresEnVotacion(jugadores, espectadores) {
     li.className = "item-jugador-simple";
     const host = j.es_anfitrion ? " 👑" : "";
     const disconnected = j.conectado === false;
-    li.innerHTML = `<span>${escaparHtml(j.nombre)}${host}${j.id === miId ? " (TÚ)" : ""}</span><strong class="${disconnected ? "texto-muted" : "puntos-verde"}">${escaparHtml(j.estado || "En votación")}</strong>`;
+    const presencia = j.estado_presencia || (disconnected ? "🔴 Desconectado" : "🟢 Conectado");
+    const estado = disconnected ? presencia : `${presencia} · ${j.estado || "En votación"}`;
+    li.innerHTML = `<span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${host}${j.id === miId ? " (TÚ)" : ""}</span><strong class="${disconnected ? "texto-muted" : "puntos-verde"}">${escaparHtml(estado)}</strong>`;
     lista.appendChild(li);
   });
   espectadores.forEach((e) => {
     const li = document.createElement("li");
     li.className = "item-jugador-simple";
-    li.innerHTML = `<span>👀 ${escaparHtml(e.nombre)}${e.id === miId ? " (TÚ)" : ""}</span><strong class="texto-muted">Espectador</strong>`;
+    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id)}${renderizarEmocion(e.emocion)}${escaparHtml(e.nombre)}${e.id === miId ? " (TÚ)" : ""}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
     lista.appendChild(li);
   });
 }
@@ -668,7 +1089,31 @@ function votarRespuesta(clave, voto, card) {
   enviarMensaje({ tipo: "voto", clave, voto });
 }
 
-function mostrarPantallaResultados(msg) {
+function animarResultadosProgresivamente(animar) {
+  temporizadoresResultado.forEach((temporizador) => clearTimeout(temporizador));
+  temporizadoresResultado = [];
+  document.querySelectorAll(".resultado-progresivo").forEach((etiqueta, indice) => {
+    const puntos = Number(etiqueta.dataset.puntos);
+    const textoFinal = etiquetaResultadoRespuesta({ estado: etiqueta.dataset.estado }, puntos);
+    if (!animar) {
+      etiqueta.textContent = textoFinal;
+      return;
+    }
+
+    etiqueta.textContent = "⏳ Calculando...";
+    const retraso = indice * 20;
+    temporizadoresResultado.push(setTimeout(() => {
+      etiqueta.textContent = puntos > 0 ? "✅ Respuesta aceptada" : "❌ Respuesta no válida";
+      etiqueta.classList.add("resultado-actualizando");
+    }, 260 + retraso));
+    temporizadoresResultado.push(setTimeout(() => {
+      etiqueta.textContent = textoFinal;
+      etiqueta.classList.remove("resultado-actualizando");
+    }, 520 + retraso));
+  });
+}
+
+function mostrarPantallaResultados(msg, animar = true) {
   if (msg.categorias) categoriasActivas = msg.categorias;
   actualizarVisibilidadCategorias();
   const letra = msg.letra || "";
@@ -712,18 +1157,12 @@ function mostrarPantallaResultados(msg) {
         let clase = "detalle-puntos detalle-cero";
         if (puntos === 10) clase = "detalle-puntos detalle-diez";
         else if (puntos === 5) clase = "detalle-puntos detalle-cinco";
-        let etiqueta = puntos > 0 ? `+${puntos} pts` : "0 pts";
-        if (d.estado === "votacion_rechazada") etiqueta = `❌ Rechazada por votación · ${etiqueta}`;
-        if (d.estado === "votada_unica" || d.estado === "votada_repetida") etiqueta = `🗳️ Validada por votación · ${etiqueta}`;
-        if (d.estado === "valida_unica") etiqueta = `✅ Automática · ${etiqueta}`;
-        if (d.estado === "valida_repetida") etiqueta = `🔁 Repetida · ${etiqueta}`;
-        if (d.estado === "letra_incorrecta") etiqueta = `❌ Letra incorrecta · ${etiqueta}`;
-        if (d.estado === "vacia") etiqueta = `⚪ Vacía · ${etiqueta}`;
-        return `<div>${escaparHtml(respuesta)}</div><small class="${clase}">${etiqueta}</small>`;
+        const etiqueta = etiquetaResultadoRespuesta(d, puntos);
+        return `<div>${escaparHtml(respuesta)}</div><small class="${clase} resultado-progresivo" data-estado="${escaparHtml(d.estado || "")}" data-puntos="${puntos}">${etiqueta}</small>`;
       };
 
       tr.innerHTML = `
-        <td><strong>${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}</strong></td>
+        <td><strong>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}</strong><small class="texto-muted">${escaparHtml(j.estado_presencia || (j.conectado === false ? "🔴 Desconectado" : "🟢 Conectado"))}</small></td>
         <td data-cat="nombre">${celdaRespuesta("nombre")}</td>
         <td data-cat="apellido">${celdaRespuesta("apellido")}</td>
         <td data-cat="ciudad">${celdaRespuesta("ciudad")}</td>
@@ -731,7 +1170,7 @@ function mostrarPantallaResultados(msg) {
         <td data-cat="animal">${celdaRespuesta("animal")}</td>
         <td data-cat="cosa">${celdaRespuesta("cosa")}</td>
         <td>
-          <span class="pts-ronda-badge">+${j.puntos_ronda || 0}</span>
+          <span class="pts-ronda-badge" data-player-id="${Number(j.id)}" data-puntos="${Number(j.puntos_ronda) || 0}">+${j.puntos_ronda || 0}</span>
           <small class="${j.bonus_ronda ? "bonus-ronda-label" : ""}">${j.puntos_categorias ?? j.puntos_ronda ?? 0} puntos de categorías${j.bonus_ronda ? ` · 🔥 RONDA PERFECTA · +${j.bonus_ronda} BONUS` : ""}</small>
         </td>
         <td><span class="pts-total-badge">${j.total || 0}</span></td>
@@ -749,13 +1188,15 @@ function mostrarPantallaResultados(msg) {
     ranking.forEach((j, indice) => {
       const item = document.createElement("div");
       item.className = `item-clasificacion ${j.id === miId ? "clasificacion-yo" : ""}`;
+      item.dataset.playerId = String(j.id);
       const medalla = indice === 0 ? "🥇" : indice === 1 ? "🥈" : indice === 2 ? "🥉" : `${indice + 1}.`;
       item.innerHTML = `
-        <span>${medalla} ${escaparHtml(j.nombre)}${j.id === miId ? " (TÚ)" : ""}</span>
-        <strong>${j.total || 0} pts</strong>
+        <span>${medalla} ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${j.id === miId ? " (TÚ)" : ""}</span>
+        <strong class="pts-total-badge">${j.total || 0} pts</strong>
       `;
       contClasificacion.appendChild(item);
     });
+    renderizarPodio(ranking, !!msg.partida_terminada);
   }
 
   // Renderizar Historial Global
@@ -775,7 +1216,7 @@ function mostrarPantallaResultados(msg) {
             const estado = (resultado.estado || "").replaceAll("_", " ");
             return `<li>${escaparHtml(categoria)} — ${escaparHtml(respuesta)} — ${escaparHtml(estado)} — ${resultado.puntos || 0} pts</li>`;
           }).join("");
-          jugadoresHtml += `<div><strong>${escaparHtml(jugador.nombre)}: ${jugador.puntos_categorias ?? jugador.puntos_obtenidos ?? 0} puntos de categorías${jugador.bonus ? ` + ${jugador.bonus} bonus 🔥 ¡RONDA PERFECTA!` : ""} · total ronda ${jugador.puntos_obtenidos ?? item.puntuaciones?.[jugador.nombre] ?? 0} · acumulado ${jugador.puntuacion_acumulada ?? "—"}</strong><ul>${respuestasHtml}</ul></div>`;
+          jugadoresHtml += `<div><strong>${renderizarAvatar(jugador.avatar || "🐻", "avatar-jugador", jugador.id)}${escaparHtml(jugador.nombre)}: ${jugador.puntos_categorias ?? jugador.puntos_obtenidos ?? 0} puntos de categorías${jugador.bonus ? ` + ${jugador.bonus} bonus 🔥 ¡RONDA PERFECTA!` : ""} · total ronda ${jugador.puntos_obtenidos ?? item.puntuaciones?.[jugador.nombre] ?? 0} · acumulado ${jugador.puntuacion_acumulada ?? "—"}</strong><ul>${respuestasHtml}</ul></div>`;
         });
         if (!jugadoresHtml) {
           jugadoresHtml = Object.entries(item.puntuaciones || {}).map(([nombre, pts]) => `<span>${escaparHtml(nombre)}: <strong>+${pts} pts</strong></span>`).join(" ");
@@ -823,26 +1264,107 @@ function mostrarPantallaResultados(msg) {
   }
 
   cambiarPantalla("RESULTADOS");
-  setTimeout(animarPuntos, 120);
+  animarResultadosProgresivamente(animar);
+  const clavePuntaje = JSON.stringify([
+    numRonda,
+    !!msg.partida_terminada,
+    ...jugadores.map((jugador) => [jugador.id, jugador.puntos_ronda, jugador.total])
+  ]);
+  if (clavePuntaje !== ultimaAnimacionPuntaje) {
+    ultimaAnimacionPuntaje = clavePuntaje;
+    setTimeout(animarPuntos, 120);
+  }
+  const jugadoresRondaPerfecta = jugadores.filter((jugador) => jugador.bonus_ronda > 0);
+  if (jugadoresRondaPerfecta.length) {
+    const participantes = jugadoresRondaPerfecta.map((jugador) => jugador.id).sort((a, b) => a - b);
+    lanzarConfeti(`ronda-perfecta:${numRonda}:${participantes.join(",")}`);
+  }
   if (msg.partida_terminada) {
-    reproducirSonido("ganador");
-    lanzarConfeti();
+    const ganoPartida = miJugador?.emocion === "🏆";
+    if (miJugador) reproducirSonido(ganoPartida ? "ganador" : "derrota");
+    if (ganoPartida) lanzarConfeti(`victoria:${numRonda}:${miJugador.id}:${miJugador.total}`);
   }
   renderizarPerfil(msg);
+  if (msg.partida_terminada) limpiarPerfilesTemporales();
+}
+
+function renderizarPodio(ranking, partidaTerminada) {
+  const podio = document.getElementById("podio-final");
+  if (!podio) return;
+  podio.replaceChildren();
+  podio.classList.toggle("hidden", !partidaTerminada || ranking.length === 0);
+  if (!partidaTerminada) return;
+
+  const puestos = [
+    { lugar: 1, medalla: "🥇", etiqueta: "Primer lugar", clase: "podio-puesto-1" },
+    { lugar: 2, medalla: "🥈", etiqueta: "Segundo lugar", clase: "podio-puesto-2" },
+    { lugar: 3, medalla: "🥉", etiqueta: "Tercer lugar", clase: "podio-puesto-3" },
+  ];
+  puestos.forEach((puesto) => {
+    const jugador = ranking[puesto.lugar - 1];
+    if (!jugador) return;
+    const tarjeta = document.createElement("div");
+    tarjeta.className = `podio-puesto ${puesto.clase}${puesto.lugar === 1 ? " podio-ganador" : ""}`;
+    tarjeta.setAttribute("aria-label", `${puesto.etiqueta}: ${jugador.nombre}, ${jugador.total || 0} puntos`);
+    tarjeta.innerHTML = `
+      <span class="podio-medalla">${puesto.medalla}</span>
+      ${puesto.lugar === 1 ? '<span class="podio-corona" aria-label="Ganador">👑 Ganador</span>' : ""}
+      <span class="podio-personaje">${renderizarAvatar(jugador.avatar || "🐻", "avatar-podio", jugador.id)}</span>
+      <strong>${escaparHtml(jugador.nombre)}</strong>
+      <span class="podio-puntos">${Number(jugador.total || 0).toLocaleString("es-CO")} pts</span>
+    `;
+    podio.appendChild(tarjeta);
+  });
+}
+
+function notificarLogrosNuevos(logros) {
+  const claveLogros = `stop_logros_vistos_${tokenSesion || miId}`;
+  const logrosPrevios = new Set((localStorage.getItem(claveLogros) || "").split(",").filter(Boolean));
+  const nuevos = logros.filter((logro) => logro.id && !logrosPrevios.has(logro.id));
+  if (!nuevos.length) return;
+
+  localStorage.setItem(claveLogros, [...logrosPrevios, ...nuevos.map((logro) => logro.id)].join(","));
+  window.setTimeout(() => {
+    reproducirSonido("logro");
+    lanzarConfeti(`logros:${tokenSesion || miId}:${nuevos.map((logro) => logro.id).sort().join(",")}`);
+    mostrarEfectoJuego(
+      "🔓",
+      "✨ LOGRO DESBLOQUEADO ✨",
+      nuevos.map((logro) => `${logro.icono} ${logro.nombre}`).join(" · "),
+      "efecto-logro"
+    );
+  }, 1600);
 }
 
 function renderizarPerfil(msg) {
   const contenedor = document.getElementById("perfil-mi-jugador");
   if (!contenedor) return;
-  const perfil = (msg.perfiles || {})[String(miId)] || jugadores.find((j) => j.id === miId)?.perfil;
+  const miJugador = (msg.jugadores || []).find((jugador) => jugador.id === miId);
+  const perfil = (msg.perfiles || {})[String(miId)] || miJugador?.perfil;
   if (!perfil) { contenedor.innerHTML = ""; return; }
+  notificarLogrosNuevos(perfil.logros || []);
+  contenedor.innerHTML = contenidoPerfil(perfil, miJugador);
+}
+
+function renderizarPerfilTemporal(msg) {
+  const contenedor = document.getElementById("perfil-mi-jugador-ronda");
+  if (!contenedor) return;
+  const miJugador = (msg.jugadores || []).find((jugador) => jugador.id === miId);
+  if (!miJugador?.perfil) {
+    contenedor.innerHTML = "";
+    return;
+  }
+  contenedor.innerHTML = contenidoPerfil(miJugador.perfil, miJugador);
+}
+
+function contenidoPerfil(perfil, miJugador) {
   const logros = (perfil.logros || []).map((logro) => `<span class="chip-logro" title="${escaparHtml(logro.descripcion || "")}">${logro.icono} ${escaparHtml(logro.nombre)}</span>`).join("");
-  contenedor.innerHTML = `
-    <div class="perfil-avatar">${escaparHtml((perfil.nombre || "?").charAt(0).toUpperCase())}</div>
+  return `
+    ${renderizarAvatar(miJugador?.avatar || AVATARES.find((opcion) => opcion.id === avatarSeleccionado)?.emoji || "🐻", "perfil-avatar", miId)}
     <div class="perfil-contenido">
       <div class="perfil-titulo"><span>👤 ${escaparHtml(perfil.nombre)}</span><strong>${Number(perfil.puntos || 0).toLocaleString("es-CO")} pts</strong></div>
       <div class="perfil-metricas">
-        <span>🏆 ${perfil.victorias || 0} victorias</span>
+        <span>🏆 ${perfil.victorias || 0} victorias de partida</span>
         <span>⭐ ${perfil.rondas_ganadas || 0} rondas ganadas</span>
         <span>🛑 ${perfil.stops || 0} STOP</span>
       </div>
@@ -850,10 +1372,32 @@ function renderizarPerfil(msg) {
     </div>`;
 }
 
+function limpiarPerfilesTemporales() {
+  ["perfil-mi-jugador", "perfil-mi-jugador-ronda"].forEach((id) => {
+    const contenedor = document.getElementById(id);
+    if (contenedor) contenedor.innerHTML = "";
+  });
+}
+
 function renderizarEstadisticas(stats) {
   const generales = document.getElementById("estadisticas-generales");
   const porJugador = document.getElementById("estadisticas-jugadores");
   if (!generales || !porJugador) return;
+  const tarjetaRey = document.getElementById("rey-del-stop");
+  if (tarjetaRey) {
+    const rey = stats.rey_del_stop;
+    tarjetaRey.replaceChildren();
+    tarjetaRey.classList.toggle("hidden", !rey);
+    if (rey) {
+      tarjetaRey.innerHTML = `
+        <span class="rey-stop-personaje">${renderizarAvatar(rey.avatar || "🐻", "avatar-rey-stop", rey.id)}</span>
+        <span class="rey-stop-texto">
+          <strong>👑 REY DEL STOP · MVP</strong>
+          <span>${escaparHtml(rey.nombre)} · ${rey.cantidad_stop} STOP</span>
+        </span>
+      `;
+    }
+  }
   const lineas = [
     ["Rondas", stats.rondas_completadas],
     ["Jugadores", stats.jugadores],
@@ -889,10 +1433,12 @@ function renderizarEstadisticas(stats) {
     const logrosHtml = (jugador.logros || []).map((logro) => `<span class="chip-logro">${logro.icono} ${escaparHtml(logro.nombre)}</span>`).join("");
     const resumen = [
       `Puntos por ronda: ${puntosRonda}`,
-      `Correctas: ${jugador.respuestas_correctas} · Incorrectas: ${jugador.respuestas_incorrectas} · Repetidas: ${jugador.respuestas_repetidas}`,
+      `Victorias de partida: ${jugador.victorias} · Rondas ganadas: ${jugador.rondas_ganadas}`,
+      `Promedio por ronda: ${Number(jugador.promedio_puntos_por_ronda || 0).toLocaleString("es-CO")} pts · Mejor ronda: ${jugador.mejor_ronda ? `R${jugador.mejor_ronda.ronda} (${jugador.mejor_ronda.puntos} pts)` : "—"}`,
+      `Válidas: ${jugador.respuestas_correctas} · No válidas: ${jugador.respuestas_incorrectas} · Repetidas: ${jugador.respuestas_repetidas}`,
       `Validadas por votación: ${jugador.validadas_por_votacion} · Rechazadas: ${jugador.rechazadas_por_votacion}`,
       `STOP: ${jugador.cantidad_stop} · Rondas perfectas: ${jugador.rondas_perfectas}`,
-      `Participación: ${jugador.participacion}% (${jugador.respuestas_enviadas}/${jugador.respuestas_posibles} respuestas posibles; ${jugador.rondas_participadas} rondas con respuestas)`,
+      `Enviadas: ${jugador.respuestas_enviadas}/${jugador.respuestas_posibles} · Participación: ${jugador.participacion}% (${jugador.rondas_participadas} rondas con respuestas)`,
     ];
     const lista = document.createElement("ul");
     resumen.forEach((texto) => {
@@ -911,9 +1457,23 @@ function renderizarEstadisticas(stats) {
 // ==================== UTILIDADES ====================
 function mostrarToast(mensaje, tipo = "error") {
   if (!toastEl) return;
+  clearTimeout(toastTimeout);
   toastEl.textContent = mensaje;
   toastEl.className = `toast ${tipo === "success" ? "toast-success" : tipo === "info" ? "toast-info" : ""}`;
-  setTimeout(() => {
+  toastTimeout = setTimeout(() => {
+    toastEl.classList.add("hidden");
+  }, 3500);
+}
+
+function mostrarNotificacionJugador(mensaje) {
+  if (!toastEl) return;
+  const evento = ["entrada", "salida", "reconexion"].includes(mensaje.evento)
+    ? mensaje.evento
+    : "entrada";
+  clearTimeout(toastTimeout);
+  toastEl.textContent = mensaje.mensaje || "Actualización de jugadores.";
+  toastEl.className = `toast toast-info toast-notificacion-jugador toast-${evento}`;
+  toastTimeout = setTimeout(() => {
     toastEl.classList.add("hidden");
   }, 3500);
 }
@@ -927,11 +1487,24 @@ function escaparHtml(texto) {
 
 // Escuchar escritura en los inputs para sincronizar
 window.addEventListener("DOMContentLoaded", () => {
+  renderizarSelectorAvatares();
+  renderizarReacciones();
+  alternarCamposCodigoSala();
+  actualizarInfoUsuario();
   const botonSonido = document.getElementById("btn-sonido");
   if (botonSonido) {
     botonSonido.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
     botonSonido.setAttribute("aria-pressed", String(sonidoActivado));
   }
+  actualizarControlMusica();
+  const controlVolumen = document.getElementById("volumen-audio");
+  if (controlVolumen) {
+    controlVolumen.value = String(Math.round(volumenAudio * 100));
+    controlVolumen.addEventListener("input", () => actualizarVolumenAudio(controlVolumen.value));
+  }
+  window.addEventListener("click", () => {
+    if (musicaActivada) iniciarMusicaConcentracion();
+  }, { once: true });
   CATEGORIAS.forEach((cat) => {
     const input = document.getElementById(`cat-${cat}`);
     if (input) {

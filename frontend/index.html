@@ -6,9 +6,6 @@
   <title>STOP Multijugador Web</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
@@ -31,8 +28,8 @@
   </div>
 
   <!-- Banner de Reconexión -->
-  <div id="banner-reconnect" class="banner-reconnect hidden">
-    <span class="spinner"></span> 🔄 Reconectando...
+  <div id="banner-reconnect" class="banner-reconnect hidden" role="status" aria-live="polite" aria-atomic="true">
+    <span class="spinner" aria-hidden="true"></span> 🔄 Reconectando...
   </div>
 
   <main class="app-container">
@@ -44,10 +41,31 @@
         <h1 class="titulo-principal">STOP MULTIJUGADOR</h1>
         <p class="subtitulo">Demostración Académica Cliente-Servidor Web</p>
         <button id="btn-sonido" class="btn btn-secundario btn-sonido" type="button" onclick="alternarSonido()" aria-pressed="true">🔊 Sonidos activados</button>
+        <div class="controles-audio">
+          <button id="btn-musica" class="btn btn-secundario" type="button" onclick="alternarMusica()" aria-pressed="false">🎵 Música desactivada</button>
+          <label for="volumen-audio">🔉 Volumen general</label>
+          <input id="volumen-audio" type="range" min="0" max="100" value="35" aria-label="Volumen general">
+        </div>
 
         <form id="form-login" class="form-login" onsubmit="event.preventDefault(); entrarAlJuego();">
           <label for="input-nombre" class="label-input">Nombre del jugador:</label>
           <input type="text" id="input-nombre" class="input-texto" placeholder="Ej: Andrés" maxlength="20" autofocus required autocomplete="off">
+
+          <label for="accion-sala" class="label-input">Sala:</label>
+          <select id="accion-sala" class="input-texto">
+            <option value="crear">Crear una sala nueva</option>
+            <option value="unir">Unirme con un código</option>
+          </select>
+          <div id="campo-codigo-sala" class="campo-codigo-sala hidden">
+            <label for="input-codigo-sala" class="label-input">Código de sala (4 caracteres):</label>
+            <input type="text" id="input-codigo-sala" class="input-texto" placeholder="Ej: 7K4P" maxlength="4" autocomplete="off" autocapitalize="characters" aria-describedby="ayuda-codigo-sala">
+            <small id="ayuda-codigo-sala" class="texto-muted">Pide el código a quien creó la sala.</small>
+          </div>
+
+          <fieldset class="selector-avatares">
+            <legend class="label-input">Elige tu personaje:</legend>
+            <div id="opciones-avatares" class="opciones-avatares" role="group" aria-label="Personajes disponibles"></div>
+          </fieldset>
           
           <button type="submit" id="btn-entrar" class="btn btn-primario">
             <span>ENTRAR A LA SALA</span>
@@ -68,6 +86,7 @@
         <div>
           <h1 class="titulo-seccion">SALA DE ESPERA</h1>
           <p class="subtitulo">Esperando jugadores para comenzar la partida...</p>
+          <p class="codigo-sala-activo">Código para invitar: <strong id="codigo-sala-activo">----</strong></p>
         </div>
         <div class="badge-mi-usuario">
           <span class="user-avatar" id="avatar-mi-usuario">A</span>
@@ -162,6 +181,8 @@
         <div class="tarjeta-temporizador" aria-live="polite">
           <span class="total-label">TIEMPO</span>
           <span class="temporizador-valor" id="temporizador-ronda">01:00</span>
+          <span id="aviso-temporizador" class="aviso-temporizador hidden" aria-hidden="true"></span>
+          <span id="cuenta-regresiva" class="cuenta-regresiva hidden" aria-live="assertive"></span>
         </div>
 
         <!-- Total acumulado del jugador -->
@@ -220,6 +241,9 @@
             <!-- Actualizado dinámicamente -->
           </ul>
 
+          <h3>Mi perfil temporal</h3>
+          <div id="perfil-mi-jugador-ronda" class="perfil-mi-jugador perfil-en-partida" aria-live="polite"></div>
+
           <div class="historial-resumen-box">
             <h3>Historial de Rondas</h3>
             <div id="lista-historial-personal" class="historial-personal-scroll">
@@ -228,6 +252,11 @@
           </div>
         </aside>
       </div>
+
+      <section class="card panel-reacciones" aria-label="Reacciones">
+        <h2>Reacciones</h2>
+        <div id="botones-reacciones" class="botones-reacciones"></div>
+      </section>
     </section>
 
     <!-- ==================== PANTALLA 4: VOTACIÓN ==================== -->
@@ -235,7 +264,7 @@
       <header class="header-resultados">
         <div>
           <span class="badge-ronda" id="badge-ronda-votacion">Ronda 1</span>
-          <h1 class="titulo-seccion">VALIDACIÓN DE RESPUESTAS</h1>
+          <h1 class="titulo-seccion">🗳️ VOTACIÓN</h1>
           <p class="subtitulo">Las respuestas conocidas se validan automáticamente. Solo las que no reconoce el sistema, pero comienzan con la letra correcta, pasan a votación.</p>
         </div>
         <div class="banner-stop-quien" id="banner-stop-votacion">¡STOP!</div>
@@ -294,6 +323,7 @@
           <div id="contenedor-clasificacion" class="clasificacion-lista">
             <p class="texto-muted">La clasificación aparecerá al terminar la ronda.</p>
           </div>
+          <div id="podio-final" class="podio-final hidden" aria-label="Podio final de la partida"></div>
           <h2 style="margin-top:24px;">HISTORIAL DE LA PARTIDA</h2>
           <div id="contenedor-historial-completo" class="historial-completo-lista">
             <!-- Rondas anteriores -->
@@ -305,6 +335,7 @@
           <div id="perfil-mi-jugador" class="perfil-mi-jugador"></div>
           <div id="estadisticas-partida" class="hidden">
             <h3>📊 Estadísticas finales</h3>
+            <div id="rey-del-stop" class="rey-del-stop hidden" aria-live="polite"></div>
             <div id="estadisticas-generales"></div>
             <h3>🏅 Logros y estadísticas por jugador</h3>
             <div id="estadisticas-jugadores"></div>
@@ -326,6 +357,8 @@
     </section>
 
   </main>
+
+  <div id="reacciones-flotantes" class="reacciones-flotantes" aria-live="polite" aria-atomic="false"></div>
 
   <!-- CRÉDITO OBLIGATORIO: Visible en todas las pantallas en la esquina inferior derecha -->
   <footer class="creditos-footer">

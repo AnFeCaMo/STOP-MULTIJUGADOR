@@ -5,9 +5,12 @@ EstadoValidacion = Literal["valida", "votacion", "invalida"]
 
 
 def normalizar(texto: str) -> str:
-    if not texto:
+    if texto is None:
         return ""
-    nfkd = unicodedata.normalize("NFKD", texto.strip().upper())
+    texto_normalizado = str(texto).strip()
+    if not texto_normalizado:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", texto_normalizado.upper())
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
