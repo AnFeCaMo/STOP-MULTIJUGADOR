@@ -13,7 +13,7 @@ LETRAS_DISPONIBLES = "ABCDEFGLMPRSTV"
 
 
 class GestorJuego:
-    def __init__(self, duracion_ronda: int = 90):
+    def __init__(self, duracion_ronda: int = 60):
         self.lock = asyncio.Lock()
         self.jugadores: Dict[int, Dict[str, Any]] = {}
         self.espectadores: Dict[int, Dict[str, Any]] = {}
@@ -34,6 +34,7 @@ class GestorJuego:
         self.duracion_ronda = duracion_ronda
         self.vence_en = 0.0
         self.vence_en_monotonic = 0.0
+        self.ronda_iniciada_monotonic = 0.0
 
     def buscar_jugador_por_ws(self, ws: WebSocket) -> Optional[int]:
         for j_id, data in self.jugadores.items():
@@ -65,6 +66,8 @@ class GestorJuego:
             "detalle_respuestas": {cat: {} for cat in self.categorias_activas},
             "total": 0,
             "historial": [],
+            "rondas_perfectas": 0,
+            "cantidad_stop": 0,
         }
 
     async def conectar_sesion(self, ws: WebSocket, nombre: str, token: Optional[str] = None):
@@ -212,6 +215,7 @@ class GestorJuego:
             self.quien_stop = ""
             self.vence_en = time.time() + self.duracion_ronda
             self.vence_en_monotonic = asyncio.get_running_loop().time() + self.duracion_ronda
+            self.ronda_iniciada_monotonic = asyncio.get_running_loop().time()
             self.estado_juego = "JUEGO"
             self.votaciones = {}
 
@@ -335,6 +339,8 @@ class GestorJuego:
                 }
 
             self.quien_stop = self.jugadores[jugador_id]["nombre"] if motivo == "stop" else ""
+            if motivo == "stop":
+                self.jugadores[jugador_id]["cantidad_stop"] += 1
             self.vence_en = 0.0
             self.vence_en_monotonic = 0.0
             self._preparar_resultado_o_votacion()
@@ -416,6 +422,8 @@ class GestorJuego:
         return candidato.get("resultado", False)
 
     def _calcular_resultados(self):
+        ahora_monotonic = asyncio.get_running_loop().time()
+        duracion_ronda_real = round(max(0.0, ahora_monotonic - self.ronda_iniciada_monotonic), 1)
         respuestas_validas_cat: Dict[str, List[str]] = {cat: [] for cat in self.categorias_activas}
         estados_por_jugador: Dict[int, Dict[str, str]] = {}
         normas_por_jugador: Dict[int, Dict[str, Optional[str]]] = {}
@@ -519,6 +527,7 @@ class GestorJuego:
             )
             if ronda_perfecta:
                 jugador["bonus_ronda"] = 10
+                jugador["rondas_perfectas"] += 1
                 jugador["puntos_ronda"] += 10
             jugador["total"] += jugador["puntos_ronda"]
             jugador["historial"].append(jugador["puntos_ronda"])
@@ -534,6 +543,7 @@ class GestorJuego:
             "motivo_cierre": "stop" if self.quien_stop else "tiempo",
             "quien_stop": self.quien_stop,
             "stopper_id": next((pid for pid, player in self.jugadores.items() if player["nombre"] == self.quien_stop), None),
+            "duracion_segundos": duracion_ronda_real,
             "puntuaciones": puntuaciones,
             "jugadores": [
                 {
@@ -562,6 +572,60 @@ class GestorJuego:
             )
         ]
 
+    def _logros_jugador(self, jugador_id: int) -> List[Dict[str, str]]:
+        jugador = self.jugadores.get(jugador_id)
+        if not jugador:
+            return []
+        rondas = [
+            item for item in self.historial_global
+            for item in item.get("jugadores", [])
+            if item.get("id") == jugador_id
+        ]
+        logros = []
+        for ronda in self.historial_global:
+            puntuaciones = ronda.get("puntuaciones", {})
+            if puntuaciones and jugador["nombre"] in puntuaciones and puntuaciones[jugador["nombre"]] == max(puntuaciones.values()):
+                logros.append({"id": "primera_victoria", "icono": "🏆", "nombre": "Primera victoria", "descripcion": "Ganaste al menos una ronda."})
+                break
+        if any(
+            ronda.get("duracion_segundos", 999) <= 20
+            and all(
+                str(item.get("respuestas", {}).get(cat, "")).strip()
+                for cat in ronda.get("categorias", [])
+            )
+            for ronda in self.historial_global
+            for item in ronda.get("jugadores", [])
+            if item.get("id") == jugador_id
+        ):
+            logros.append({"id": "respuesta_rapida", "icono": "⚡", "nombre": "Respuesta rápida", "descripcion": "Completaste todas las categorías en 20 segundos o menos."})
+        consecutivas = 0
+        max_consecutivas = 0
+        for item in sorted(rondas, key=lambda x: x.get("ronda", 0)):
+            if item.get("puntos_obtenidos", 0) > 0:
+                consecutivas += 1
+                max_consecutivas = max(max_consecutivas, consecutivas)
+            else:
+                consecutivas = 0
+        if max_consecutivas >= 3:
+            logros.append({"id": "racha_tres", "icono": "🔥", "nombre": "3 rondas consecutivas", "descripcion": "Conseguiste puntos en tres rondas seguidas."})
+        estados_validos = {"valida_unica", "valida_repetida", "votada_unica", "votada_repetida"}
+        if any(
+            ronda.get("categorias")
+            and any(
+                item.get("id") == jugador_id
+                and len(item.get("resultados", {})) >= len(ronda.get("categorias", []))
+                and all(detalle.get("estado") in estados_validos for detalle in item.get("resultados", {}).values())
+                for item in ronda.get("jugadores", [])
+            )
+            for ronda in self.historial_global
+        ):
+            logros.append({"id": "todas_validas", "icono": "🎯", "nombre": "Todas las respuestas válidas", "descripcion": "Completaste una ronda con todas tus respuestas válidas."})
+        if jugador.get("cantidad_stop", 0) >= 1:
+            max_stops = max((sum(1 for r in self.historial_global if r.get("stopper_id") == pid) for pid in self.jugadores), default=0)
+            if jugador.get("cantidad_stop", 0) == max_stops:
+                logros.append({"id": "rey_stop", "icono": "😂", "nombre": "Rey del STOP", "descripcion": "Eres quien más veces ha presionado STOP."})
+        return logros
+
     def _estadisticas_partida(self):
         clasificacion = self._clasificacion()
         lideres = []
@@ -584,6 +648,7 @@ class GestorJuego:
                 "respuestas_enviadas": 0,
                 "respuestas_posibles": 0,
                 "rondas_participadas": 0,
+                "logros": [],
             }
             for jugador_id, jugador in self.jugadores.items()
         }
@@ -595,6 +660,8 @@ class GestorJuego:
             "respuestas_rechazadas_votacion": 0,
             "cantidad_stop": 0,
             "rondas_perfectas": 0,
+            "mejor_jugador": lideres[0] if lideres else "—",
+            "mayor_puntuacion": clasificacion[0]["puntos"] if clasificacion else 0,
         }
         puntos_distribuidos = 0
         for ronda in self.historial_global:
@@ -661,6 +728,8 @@ class GestorJuego:
             posibles = stats["respuestas_posibles"]
             stats["participacion"] = round(100 * stats["respuestas_enviadas"] / posibles, 1) if posibles else 0.0
             stats["participacion_porcentaje"] = stats["participacion"]
+            stats["logros"] = self._logros_jugador(stats["id"])
+            stats["victorias"] = sum(1 for r in self.historial_global if r.get("puntuaciones", {}).get(stats["nombre"], -1) == max(r.get("puntuaciones", {}).values(), default=-1) and r.get("puntuaciones"))
         return {
             "rondas_completadas": len(self.historial_global),
             "jugadores": len(self.jugadores),
@@ -691,6 +760,7 @@ class GestorJuego:
             self.categorias_activas = list(CATEGORIAS)
             self.vence_en = 0.0
             self.vence_en_monotonic = 0.0
+            self.ronda_iniciada_monotonic = 0.0
             self._detalles_votacion_final = []
             for jugador in self.jugadores.values():
                 jugador["total"] = 0
@@ -701,6 +771,8 @@ class GestorJuego:
                 jugador["bonus_ronda"] = 0
                 jugador["desglose_ronda"] = {cat: 0 for cat in self.categorias_activas}
                 jugador["detalle_respuestas"] = {cat: {} for cat in self.categorias_activas}
+                jugador["rondas_perfectas"] = 0
+                jugador["cantidad_stop"] = 0
             self.estado_juego = "SALA"
             self._sincronizar_anfitrion()
             return True, None
@@ -739,7 +811,10 @@ class GestorJuego:
                     "es_anfitrion": d["es_anfitrion"],
                     "total": d["total"],
                     "conectado": d.get("ws") is not None,
-                    "estado": "jugando",
+                    "estado": (
+                        "completó" if all(str(d["respuestas_ronda"].get(cat, "")).strip() for cat in self.categorias_activas)
+                        else "escribiendo"
+                    ),
                 }
                 for d in self.jugadores.values()
             ],
@@ -824,6 +899,31 @@ class GestorJuego:
         mensaje["espectador"] = es_espectador
         return mensaje
 
+    def _perfil_jugador(self, jugador_id: int) -> Dict[str, Any]:
+        jugador = self.jugadores.get(jugador_id)
+        if not jugador:
+            return {"nombre": "", "victorias": 0, "puntos": 0, "rondas_ganadas": 0, "logros": []}
+        victorias = 0
+        rondas_ganadas = 0
+        for ronda in self.historial_global:
+            puntuaciones = ronda.get("puntuaciones", {})
+            if not puntuaciones or jugador["nombre"] not in puntuaciones:
+                continue
+            maximo = max(puntuaciones.values())
+            if puntuaciones[jugador["nombre"]] == maximo:
+                victorias += 1
+                rondas_ganadas += 1
+        max_total = max((j["total"] for j in self.jugadores.values()), default=0)
+        victoria_partida = 1 if self.partida_terminada and jugador["total"] == max_total and max_total > 0 else 0
+        return {
+            "nombre": jugador["nombre"],
+            "victorias": victoria_partida,
+            "puntos": jugador["total"],
+            "rondas_ganadas": rondas_ganadas,
+            "logros": self._logros_jugador(jugador_id),
+            "stops": jugador.get("cantidad_stop", 0),
+        }
+
     def serializar_resultados(self):
         resultados = []
         for d in self.jugadores.values():
@@ -840,6 +940,7 @@ class GestorJuego:
                 "detalle_respuestas": d["detalle_respuestas"],
                 "total": d["total"],
                 "historial": d["historial"],
+                "perfil": self._perfil_jugador(d["id"]),
             })
         return {
             "tipo": "resultados",
@@ -857,4 +958,5 @@ class GestorJuego:
             "estadisticas": self._estadisticas_partida() if self.partida_terminada else None,
             "votaciones_finales": getattr(self, "_detalles_votacion_final", []),
             "anfitrion_id": self.anfitrion_id,
+            "perfiles": {str(j["id"]): self._perfil_jugador(j["id"]) for j in self.jugadores.values()},
         }

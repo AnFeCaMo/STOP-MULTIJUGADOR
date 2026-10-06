@@ -49,7 +49,7 @@ async def iniciar_servidor():
     raise RuntimeError("No se pudo iniciar el servidor de pruebas")
 
 
-async def test_completo():
+async def _test_completo_async():
     servidor_proc, primera_ws = await iniciar_servidor()
     websockets_abiertos = [primera_ws]
     try:
@@ -203,5 +203,10 @@ async def test_completo():
             servidor_proc.kill()
 
 
+
+def test_completo():
+    asyncio.run(_test_completo_async())
+
+
 if __name__ == "__main__":
-    asyncio.run(test_completo())
+    asyncio.run(_test_completo_async())

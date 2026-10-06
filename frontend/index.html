@@ -14,6 +14,11 @@
 
   <!-- Alerta flotante de estado / error -->
   <div id="toast" class="toast hidden"></div>
+  <div id="efecto-juego" class="efecto-juego hidden" aria-live="assertive">
+    <div class="efecto-emoji" id="efecto-emoji">😂</div>
+    <div class="efecto-titulo" id="efecto-titulo">¡STOP!</div>
+    <div class="efecto-subtitulo" id="efecto-subtitulo"></div>
+  </div>
   <div id="badge-espectador" class="badge-espectador hidden" role="status">👀 ESPECTADOR</div>
   <div id="confirm-stop-modal" class="modal-confirmacion hidden" role="dialog" aria-modal="true" aria-labelledby="titulo-confirmacion-stop">
     <div class="card modal-contenido">
@@ -38,6 +43,7 @@
         <div class="badge-logo">STOP</div>
         <h1 class="titulo-principal">STOP MULTIJUGADOR</h1>
         <p class="subtitulo">Demostración Académica Cliente-Servidor Web</p>
+        <button id="btn-sonido" class="btn btn-secundario btn-sonido" type="button" onclick="alternarSonido()" aria-pressed="true">🔊 Sonidos activados</button>
 
         <form id="form-login" class="form-login" onsubmit="event.preventDefault(); entrarAlJuego();">
           <label for="input-nombre" class="label-input">Nombre del jugador:</label>
@@ -155,7 +161,7 @@
 
         <div class="tarjeta-temporizador" aria-live="polite">
           <span class="total-label">TIEMPO</span>
-          <span class="temporizador-valor" id="temporizador-ronda">01:30</span>
+          <span class="temporizador-valor" id="temporizador-ronda">01:00</span>
         </div>
 
         <!-- Total acumulado del jugador -->
@@ -296,10 +302,11 @@
 
         <div class="card panel-acciones-resultados">
           <h2 id="titulo-accion-resultados">Próxima Ronda</h2>
+          <div id="perfil-mi-jugador" class="perfil-mi-jugador"></div>
           <div id="estadisticas-partida" class="hidden">
-            <h3>Estadísticas de la partida</h3>
+            <h3>📊 Estadísticas finales</h3>
             <div id="estadisticas-generales"></div>
-            <h3>Estadísticas por jugador</h3>
+            <h3>🏅 Logros y estadísticas por jugador</h3>
             <div id="estadisticas-jugadores"></div>
           </div>
           <p class="subtitulo">Los puntos anteriores se conservan acumulados en tu total.</p>
@@ -322,7 +329,7 @@
 
   <!-- CRÉDITO OBLIGATORIO: Visible en todas las pantallas en la esquina inferior derecha -->
   <footer class="creditos-footer">
-    Desarrollado por el Ing. Andrés Camacho y la Ing. Yulesi Carraza
+    Desarrollado por el Ing. Andrés Camacho y la Ing. Yulesi Carranza
   </footer>
 
   <script src="app.js"></script>

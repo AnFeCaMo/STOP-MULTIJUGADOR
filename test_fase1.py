@@ -10,7 +10,7 @@ class FakeWebSocket:
     pass
 
 
-async def crear_partida(nombres=("Andres", "Ana"), duracion=90):
+async def crear_partida(nombres=("Andres", "Ana"), duracion=60):
     gestor = GestorJuego(duracion_ronda=duracion)
     ids = []
     for nombre in nombres:
@@ -36,10 +36,10 @@ def respuestas(nombre, **overrides):
     return resultado
 
 
-def test_temporizador_dura_90_segundos_y_se_serializa():
+def test_temporizador_dura_60_segundos_y_se_serializa():
     async def caso():
-        gestor, ids = await crear_partida(duracion=90)
-        assert round(gestor.vence_en - __import__("time").time()) in (89, 90)
+        gestor, ids = await crear_partida(duracion=60)
+        assert round(gestor.vence_en - __import__("time").time()) in (59, 60)
         assert gestor.serializar_ronda()["vence_en"] == gestor.vence_en
     asyncio.run(caso())
 

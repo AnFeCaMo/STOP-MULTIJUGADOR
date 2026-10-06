@@ -9,11 +9,6 @@ from fastapi.staticfiles import StaticFiles
 from backend.servidor import GestorJuego
 
 app = FastAPI(title="STOP Multijugador Web")
-
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
 gestor = GestorJuego()
 temporizador_ronda = None
 
@@ -221,6 +216,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     if temporizador_ronda and not temporizador_ronda.done():
                         temporizador_ronda.cancel()
                     await broadcast_fase_cerrada()
+                elif gestor.estado_juego == "JUEGO":
+                    presencia = gestor.serializar_ronda()
+                    presencia["tipo"] = "jugadores"
+                    await broadcast(presencia)
 
             elif tipo == "stop":
                 respuestas_finales = mensaje.get("respuestas")
@@ -305,12 +304,7 @@ if os.path.exists(FRONTEND_DIR):
 
 
 def iniciar():
-    uvicorn.run(
-        "backend.web_server:app",
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", "8000")),
-        reload=False,
-    )
+    uvicorn.run("backend.web_server:app", host="0.0.0.0", port=8000, reload=False)
 
 
 if __name__ == "__main__":

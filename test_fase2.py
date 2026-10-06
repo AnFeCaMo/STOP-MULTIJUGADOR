@@ -17,7 +17,7 @@ async def crear_sesion(gestor, nombre):
     return ws, sesion
 
 
-async def crear_ronda(nombres=("Andres", "Ana"), duracion=90):
+async def crear_ronda(nombres=("Andres", "Ana"), duracion=60):
     gestor = GestorJuego(duracion_ronda=duracion)
     sesiones = [await crear_sesion(gestor, nombre) for nombre in nombres]
     ids = [sesion["id"] for _, sesion in sesiones]

@@ -82,7 +82,7 @@ STOP-MULTIJUGADOR/
 
 ## 4. Cómo Iniciar el Servidor
 
-El servidor escucha en `0.0.0.0`. En Render utiliza automáticamente el puerto definido por la variable `PORT`; localmente usa `8000` si `PORT` no está definida.
+El servidor escucha en `0.0.0.0` en el puerto `8000`.
 
 Puedes iniciarlo con cualquiera de los dos comandos siguientes:
 
@@ -130,7 +130,7 @@ Los participantes abren en el navegador la dirección del equipo que ejecuta el 
    * **4. Fruta**
    * **5. Animal**
    * **6. Cosa**
-3. Cada ronda dura 90 segundos. El primer jugador en terminar puede confirmar **¡STOP!**; si nadie lo hace, la ronda cierra al agotarse el tiempo.
+3. Cada ronda dura 60 segundos. El primer jugador en terminar puede confirmar **¡STOP!**; si nadie lo hace, la ronda cierra al agotarse el tiempo.
 4. El servidor finaliza la ronda de inmediato y descarta presiones de STOP posteriores.
 
 ### C. Validación, votación y resultados
@@ -170,18 +170,18 @@ for test_file in test_fase*.py test_auditoria.py test_reglas.py test_juego.py; d
 
 **Desarrollado por el Ing. Andrés Camacho y la Ing. Yulesi Carraza**
 
-## 9. Despliegue en Render
+## Mejoras V2 — Experiencia de juego y gamificación
 
-El proyecto incluye `render.yaml` y está preparado para desplegarse como un **Web Service** gratuito de Render. Render instala las dependencias con `requirements.txt` y ejecuta Uvicorn en `0.0.0.0:$PORT`.
-
-### Configuración equivalente manual
-
-- **Runtime:** Python 3
-- **Build Command:** `pip install -r requirements.txt`
-- **Start Command:** `uvicorn backend.web_server:app --host 0.0.0.0 --port $PORT`
-- **Health Check Path:** `/health`
-- **Plan:** Free
-
-El endpoint WebSocket es `/ws`. El frontend detecta automáticamente HTTPS y utiliza `wss://` cuando el sitio está publicado en Render.
-
-> Nota: el plan Free de Render puede suspender el servicio después de 15 minutos sin tráfico entrante y volver a activarlo cuando llega una nueva solicitud o conexión WebSocket. El estado de la partida está en memoria, por lo que una reinicialización del servicio comienza una sesión nueva.
+- Duración predeterminada de cada ronda: **60 segundos**.
+- Animación de inicio de ronda y anuncio de letra.
+- Animación especial al presionar **STOP**, con emoji 😂 y nombre del jugador.
+- Temporizador con alerta visual durante los últimos 10 segundos y cuenta regresiva sonora en los últimos 5.
+- Estados de jugadores en tiempo real: **escribiendo** / **completó**.
+- Puntos de ronda con animación de entrada.
+- Celebración final con confeti y sonido opcional.
+- Perfil temporal del jugador durante la partida.
+- Sistema de logros: 🏆 Primera victoria, ⚡ Respuesta rápida, 🔥 3 rondas consecutivas, 🎯 Todas las respuestas válidas y 😂 Rey del STOP.
+- Estadísticas finales resumidas: rondas, jugadores, palabras válidas, STOP realizados, mejor jugador y mayor puntuación, además de métricas detalladas.
+- Sonidos generados con Web Audio API, sin archivos externos ni servicios de pago.
+- Animaciones realizadas con CSS/JavaScript, sin librerías de pago ni dependencias externas adicionales.
+- Pruebas automatizadas ampliadas para las nuevas funciones.

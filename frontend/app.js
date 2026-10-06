@@ -16,6 +16,8 @@ let esEspectador = false;
 let estadoJuego = "LOGIN"; // LOGIN, SALA, JUEGO, VOTACION, RESULTADOS
 let debounceRespuestasTimer = null;
 let temporizadorVisual = null;
+let sonidoActivado = localStorage.getItem("stop_sonido") !== "0";
+let audioContext = null;
 
 // Elementos DOM principales
 const toastEl = document.getElementById("toast");
@@ -135,6 +137,8 @@ function manejarMensajeServidor(msg) {
       break;
 
     case "ronda":
+      reproducirSonido("ronda");
+      mostrarEfectoRonda(msg);
       iniciarPantallaJuego(msg);
       actualizarJugadoresEnPartida(msg.jugadores || [], msg.espectadores || []);
       break;
@@ -146,18 +150,120 @@ function manejarMensajeServidor(msg) {
     case "votacion":
       detenerTemporizadorVisual();
       bloquearCamposRonda();
+      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador");
+      else reproducirSonido("tiempo");
       mostrarPantallaVotacion(msg);
       break;
 
     case "resultados":
       detenerTemporizadorVisual();
       bloquearCamposRonda();
+      if (msg.motivo_cierre === "stop") mostrarEfectoStop(msg.quien_stop || "Un jugador");
+      else reproducirSonido("tiempo");
       mostrarPantallaResultados(msg);
       break;
 
     default:
       console.log("Mensaje no reconocido:", msg);
   }
+}
+
+// ==================== ANIMACIONES Y SONIDO ====================
+function obtenerAudioContext() {
+  if (!sonidoActivado) return null;
+  try {
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === "suspended") audioContext.resume();
+    return audioContext;
+  } catch (_) { return null; }
+}
+
+function reproducirSonido(tipo) {
+  const ctx = obtenerAudioContext();
+  if (!ctx) return;
+  const patrones = {
+    tic: [[620, 0.04, 0.035]],
+    ronda: [[440, 0.07, 0.06], [660, 0.08, 0.07], [880, 0.12, 0.08]],
+    stop: [[220, 0.08, 0.08], [110, 0.16, 0.12]],
+    tiempo: [[180, 0.16, 0.1], [120, 0.2, 0.12]],
+    ganador: [[523, 0.08, 0.07], [659, 0.08, 0.07], [784, 0.16, 0.1], [1047, 0.25, 0.12]],
+    punto: [[740, 0.07, 0.04]]
+  };
+  let retraso = 0;
+  (patrones[tipo] || []).forEach(([frecuencia, duracion, volumen]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = tipo === "stop" ? "sawtooth" : "sine";
+    osc.frequency.value = frecuencia;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime + retraso);
+    gain.gain.exponentialRampToValueAtTime(volumen, ctx.currentTime + retraso + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + retraso + duracion);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(ctx.currentTime + retraso);
+    osc.stop(ctx.currentTime + retraso + duracion + 0.02);
+    retraso += duracion * 0.85;
+  });
+}
+
+function alternarSonido() {
+  sonidoActivado = !sonidoActivado;
+  localStorage.setItem("stop_sonido", sonidoActivado ? "1" : "0");
+  const boton = document.getElementById("btn-sonido");
+  if (boton) {
+    boton.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
+    boton.setAttribute("aria-pressed", String(sonidoActivado));
+  }
+  if (sonidoActivado) reproducirSonido("punto");
+}
+
+function mostrarEfectoJuego(emoji, titulo, subtitulo, clase = "") {
+  const overlay = document.getElementById("efecto-juego");
+  const emojiEl = document.getElementById("efecto-emoji");
+  const tituloEl = document.getElementById("efecto-titulo");
+  const subtituloEl = document.getElementById("efecto-subtitulo");
+  if (!overlay) return;
+  overlay.className = `efecto-juego ${clase}`.trim();
+  emojiEl.textContent = emoji;
+  tituloEl.textContent = titulo;
+  subtituloEl.textContent = subtitulo || "";
+  void overlay.offsetWidth;
+  overlay.classList.add("visible");
+  clearTimeout(overlay._timer);
+  overlay._timer = setTimeout(() => overlay.classList.remove("visible"), clase.includes("stop") ? 1500 : 1800);
+}
+
+function mostrarEfectoStop(nombre) {
+  reproducirSonido("stop");
+  mostrarEfectoJuego("😂", "¡STOP!", `${nombre} ha terminado la ronda`, "efecto-stop");
+}
+
+function mostrarEfectoRonda(msg) {
+  const letra = msg.letra || "?";
+  mostrarEfectoJuego("✋", `¡LETRA ${letra}!`, "Prepárate... comienza la ronda", "efecto-ronda");
+}
+
+function lanzarConfeti() {
+  const contenedor = document.createElement("div");
+  contenedor.className = "confeti-contenedor";
+  for (let i = 0; i < 42; i += 1) {
+    const pieza = document.createElement("span");
+    pieza.textContent = ["🎉", "✨", "⭐", "🏆"][i % 4];
+    pieza.style.setProperty("--x", `${Math.round(Math.random() * 100)}vw`);
+    pieza.style.setProperty("--delay", `${(Math.random() * 0.45).toFixed(2)}s`);
+    pieza.style.setProperty("--duracion", `${(1.5 + Math.random() * 1.8).toFixed(2)}s`);
+    contenedor.appendChild(pieza);
+  }
+  document.body.appendChild(contenedor);
+  setTimeout(() => contenedor.remove(), 3600);
+}
+
+function animarPuntos() {
+  document.querySelectorAll(".pts-ronda-badge").forEach((el, indice) => {
+    setTimeout(() => {
+      el.classList.add("puntos-entra");
+      reproducirSonido("punto");
+    }, indice * 100);
+  });
 }
 
 // ==================== TRANSICIÓN DE PANTALLAS ====================
@@ -445,10 +551,16 @@ function iniciarTemporizadorVisual(venceEn, servidorAhora) {
   detenerTemporizadorVisual();
   const etiqueta = document.getElementById("temporizador-ronda");
   const diferenciaReloj = Number(servidorAhora) * 1000 - Date.now();
+  let ultimoSegundo = null;
   const actualizar = () => {
     const segundos = Math.max(0, Math.ceil((Number(venceEn) * 1000 - (Date.now() + diferenciaReloj)) / 1000));
-    etiqueta.textContent = `${String(Math.floor(segundos / 60)).padStart(2, "0")}:${String(segundos % 60).padStart(2, "0")}`;
-    etiqueta.classList.toggle("tiempo-agotado", segundos === 0);
+    if (etiqueta) {
+      etiqueta.textContent = `${String(Math.floor(segundos / 60)).padStart(2, "0")}:${String(segundos % 60).padStart(2, "0")}`;
+      etiqueta.classList.toggle("tiempo-agotado", segundos === 0);
+      etiqueta.classList.toggle("tiempo-critico", segundos <= 10 && segundos > 0);
+    }
+    if (segundos !== ultimoSegundo && segundos <= 5 && segundos > 0) reproducirSonido("tic");
+    ultimoSegundo = segundos;
   };
   actualizar();
   temporizadorVisual = setInterval(actualizar, 250);
@@ -711,6 +823,31 @@ function mostrarPantallaResultados(msg) {
   }
 
   cambiarPantalla("RESULTADOS");
+  setTimeout(animarPuntos, 120);
+  if (msg.partida_terminada) {
+    reproducirSonido("ganador");
+    lanzarConfeti();
+  }
+  renderizarPerfil(msg);
+}
+
+function renderizarPerfil(msg) {
+  const contenedor = document.getElementById("perfil-mi-jugador");
+  if (!contenedor) return;
+  const perfil = (msg.perfiles || {})[String(miId)] || jugadores.find((j) => j.id === miId)?.perfil;
+  if (!perfil) { contenedor.innerHTML = ""; return; }
+  const logros = (perfil.logros || []).map((logro) => `<span class="chip-logro" title="${escaparHtml(logro.descripcion || "")}">${logro.icono} ${escaparHtml(logro.nombre)}</span>`).join("");
+  contenedor.innerHTML = `
+    <div class="perfil-avatar">${escaparHtml((perfil.nombre || "?").charAt(0).toUpperCase())}</div>
+    <div class="perfil-contenido">
+      <div class="perfil-titulo"><span>👤 ${escaparHtml(perfil.nombre)}</span><strong>${Number(perfil.puntos || 0).toLocaleString("es-CO")} pts</strong></div>
+      <div class="perfil-metricas">
+        <span>🏆 ${perfil.victorias || 0} victorias</span>
+        <span>⭐ ${perfil.rondas_ganadas || 0} rondas ganadas</span>
+        <span>🛑 ${perfil.stops || 0} STOP</span>
+      </div>
+      <div class="perfil-logros">${logros || '<span class="texto-muted">Tus logros aparecerán aquí.</span>'}</div>
+    </div>`;
 }
 
 function renderizarEstadisticas(stats) {
@@ -718,12 +855,17 @@ function renderizarEstadisticas(stats) {
   const porJugador = document.getElementById("estadisticas-jugadores");
   if (!generales || !porJugador) return;
   const lineas = [
-    ["Rondas jugadas", stats.rondas_completadas], ["Jugadores", stats.jugadores],
-    ["Espectadores", stats.espectadores], ["Respuestas totales", stats.respuestas_totales],
-    ["Respuestas válidas", stats.respuestas_validas], ["Respuestas inválidas", stats.respuestas_invalidas],
+    ["Rondas", stats.rondas_completadas],
+    ["Jugadores", stats.jugadores],
+    ["Palabras válidas", stats.respuestas_validas],
+    ["STOP realizados", stats.cantidad_stop],
+    ["Mejor jugador", stats.mejor_jugador || (stats.ganadores || []).join(", ") || "—"],
+    ["Mayor puntuación", Number(stats.mayor_puntuacion || 0).toLocaleString("es-CO")],
+    ["Respuestas totales", stats.respuestas_totales],
+    ["Respuestas inválidas", stats.respuestas_invalidas],
     ["Validadas por votación", stats.respuestas_validadas_votacion],
     ["Rechazadas por votación", stats.respuestas_rechazadas_votacion],
-    ["STOP", stats.cantidad_stop], ["Rondas perfectas (con al menos una)", stats.rondas_perfectas],
+    ["Rondas perfectas", stats.rondas_perfectas],
     ["Letras utilizadas", (stats.letras_utilizadas || []).join(", ") || "—"],
   ];
   generales.replaceChildren();
@@ -744,6 +886,7 @@ function renderizarEstadisticas(stats) {
     const puntosRonda = (jugador.puntos_por_ronda || []).map((r) =>
       `R${r.ronda}: ${r.total} (${r.puntos_categorias} categorías + ${r.bonus} bonus)`
     ).join(" · ") || "Sin rondas jugadas";
+    const logrosHtml = (jugador.logros || []).map((logro) => `<span class="chip-logro">${logro.icono} ${escaparHtml(logro.nombre)}</span>`).join("");
     const resumen = [
       `Puntos por ronda: ${puntosRonda}`,
       `Correctas: ${jugador.respuestas_correctas} · Incorrectas: ${jugador.respuestas_incorrectas} · Repetidas: ${jugador.respuestas_repetidas}`,
@@ -757,7 +900,10 @@ function renderizarEstadisticas(stats) {
       li.textContent = texto;
       lista.appendChild(li);
     });
-    card.append(titulo, lista);
+    const logros = document.createElement("div");
+    logros.className = "perfil-logros estadisticas-logros";
+    logros.innerHTML = logrosHtml || '<span class="texto-muted">Sin logros todavía.</span>';
+    card.append(titulo, lista, logros);
     porJugador.appendChild(card);
   });
 }
@@ -781,6 +927,11 @@ function escaparHtml(texto) {
 
 // Escuchar escritura en los inputs para sincronizar
 window.addEventListener("DOMContentLoaded", () => {
+  const botonSonido = document.getElementById("btn-sonido");
+  if (botonSonido) {
+    botonSonido.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
+    botonSonido.setAttribute("aria-pressed", String(sonidoActivado));
+  }
   CATEGORIAS.forEach((cat) => {
     const input = document.getElementById(`cat-${cat}`);
     if (input) {
