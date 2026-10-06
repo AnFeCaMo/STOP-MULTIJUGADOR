@@ -70,6 +70,7 @@ class GestorJuego:
         self.quien_stop = ""
         self.historial_global: List[Dict[str, Any]] = []
         self.votaciones: Dict[str, Dict[str, Any]] = {}
+        self._detalles_votacion_final: List[Dict[str, Any]] = []
         self.duracion_ronda = duracion_ronda
         self.vence_en = 0.0
         self.vence_en_monotonic = 0.0
@@ -189,17 +190,11 @@ class GestorJuego:
             if not nombre_limpio:
                 return None, "El nombre es obligatorio."
 
-            # Una persona que vuelve con su token puede recuperar la partida
-            # durante la ventana de reconexión. Un usuario nuevo (sin token)
-            # nunca debe entrar accidentalmente a una partida abandonada.
-            if not self._hay_sesiones_conectadas() and self.jugadores and not token:
-                self._cancelar_reinicio_sala()
-                self._reiniciar_sala_vacia_locked()
-            else:
-                self._cancelar_reinicio_sala()
-
             sesion, era_espectador = self._buscar_sesion(token)
             if sesion:
+                # Solo un token que aún pertenece a esta sala puede cancelar
+                # la ventana de expiración y recuperar la partida.
+                self._cancelar_reinicio_sala()
                 jugador_id, datos = sesion
                 anterior = datos.get("ws")
                 datos["ws"] = ws
@@ -220,9 +215,18 @@ class GestorJuego:
                     "socket_anterior": anterior if anterior is not ws else None,
                 }, None
 
+            # Sin sockets activos, un token inválido o una entrada nueva no
+            # puede conservar la partida abandonada ni entrar como espectador.
+            if not self._hay_sesiones_conectadas() and (self.jugadores or self.espectadores):
+                self._cancelar_reinicio_sala()
+                self._reiniciar_sala_vacia_locked()
+
             for data in list(self.jugadores.values()) + list(self.espectadores.values()):
                 if data["nombre"].casefold() == nombre_limpio.casefold():
                     return None, f"Ya existe un jugador con el nombre '{nombre_limpio}'."
+
+            # Errores de validación o tokens no válidos no deben cancelar el timer.
+            self._cancelar_reinicio_sala()
 
             j_id = self.id_counter
             self.id_counter += 1

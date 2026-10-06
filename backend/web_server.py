@@ -78,12 +78,16 @@ def cancelar_limpieza_sala(codigo_sala: str):
 async def limpiar_sala_abandonada(codigo_sala: str, gestor_sala: GestorJuego):
     tarea_actual = asyncio.current_task()
     try:
-        await asyncio.sleep(gestor_sala.ventana_reconexion)
-        if (
-            codigo_sala != "7K4P"
-            and gestores_por_codigo.get(codigo_sala) is gestor_sala
-            and not gestor_sala.sesiones_conectadas()
-        ):
+        # GestorJuego owns the only grace timer; this task releases web-server
+        # registries after the in-memory game has been reset.
+        if not gestor_sala.sesiones_conectadas():
+            if gestor_sala._tarea_reinicio_sala is None:
+                gestor_sala._programar_reinicio_si_sala_vacia()
+        tarea_reinicio = gestor_sala._tarea_reinicio_sala
+        if tarea_reinicio is None:
+            return
+        await asyncio.shield(tarea_reinicio)
+        if not gestor_sala.sesiones_conectadas():
             temporizador = temporizadores_ronda.pop(id(gestor_sala), None)
             if temporizador is not None and not temporizador.done():
                 temporizador.cancel()
@@ -92,15 +96,14 @@ async def limpiar_sala_abandonada(codigo_sala: str, gestor_sala: GestorJuego):
                     tareas_ausencia.pop(clave, None)
                     if not tarea.done():
                         tarea.cancel()
-            gestores_por_codigo.pop(codigo_sala, None)
+            if codigo_sala != "7K4P" and gestores_por_codigo.get(codigo_sala) is gestor_sala:
+                gestores_por_codigo.pop(codigo_sala, None)
     finally:
         if tareas_limpieza_sala.get(codigo_sala) is tarea_actual:
             tareas_limpieza_sala.pop(codigo_sala, None)
 
 
 def programar_limpieza_sala(codigo_sala: str, gestor_sala: GestorJuego):
-    if codigo_sala == "7K4P":
-        return
     cancelar_limpieza_sala(codigo_sala)
     tareas_limpieza_sala[codigo_sala] = asyncio.create_task(
         limpiar_sala_abandonada(codigo_sala, gestor_sala)
