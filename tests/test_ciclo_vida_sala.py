@@ -92,7 +92,7 @@ def test_expiracion_limpia_estado_y_token_antiguo_crea_partida_nueva():
     asyncio.run(caso())
 
 
-def test_token_desconocido_no_conserva_ni_extiende_sala_abandonada():
+def test_token_desconocido_no_registra_jugador_ni_cancela_expiracion():
     async def caso():
         gestor = GestorJuego(ventana_reconexion=0.1)
         ws = FakeWebSocket()
@@ -100,17 +100,30 @@ def test_token_desconocido_no_conserva_ni_extiende_sala_abandonada():
         await gestor.iniciar_ronda(anterior["id"])
         await gestor.desconectar(ws)
 
-        nueva, error = await gestor.conectar_sesion(
+        nuevo, error = await gestor.conectar_sesion(
             FakeWebSocket(), "Carlos", "token-invalido"
         )
-        assert error is None and not nueva["reconectado"]
-        assert nueva["id"] == 1 and nueva["es_anfitrion"]
-        assert gestor.estado_juego == "SALA" and gestor.ronda_actual == 0
-        assert gestor.jugadores[1]["nombre"] == "Carlos"
-        assert gestor.jugadores[1]["token"] != anterior["token"]
-        assert gestor._tarea_reinicio_sala is None
+        assert nuevo is None and error
+        assert gestor.jugadores[anterior["id"]]["ws"] is None
+        assert gestor._tarea_reinicio_sala is not None
+        await asyncio.sleep(0.12)
+        assert gestor.jugadores == {}
+        assert gestor.id_counter == 1
+
+        nueva, error = await gestor.conectar_sesion(FakeWebSocket(), "Carlos")
+        assert error is None and nueva["id"] == 1
+        assert nueva["es_anfitrion"] and not nueva["reconectado"]
 
     asyncio.run(caso())
+
+
+def test_frontend_borra_credenciales_y_vuelve_al_login_si_el_token_expira():
+    from pathlib import Path
+
+    js = (Path(__file__).parents[1] / "frontend" / "app.js").read_text()
+    assert 'msg.codigo === "sesion_expirada"' in js
+    assert 'localStorage.removeItem(clave)' in js
+    assert 'cambiarPantalla("LOGIN")' in js
 
 
 def test_limpieza_de_sala_predeterminada_cancela_temporizador_web():

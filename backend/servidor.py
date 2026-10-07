@@ -37,6 +37,7 @@ AVATARES = {
     "calabaza": "🎃",
 }
 AVATAR_PREDETERMINADO = "oso"
+ERROR_SESION_EXPIRADA = "La sesión guardada ya expiró. Ingresa tu nombre para empezar de nuevo."
 REACCIONES = {
     "jaja": "😂 JAJA",
     "facil": "😎 Fácil",
@@ -214,6 +215,11 @@ class GestorJuego:
                     "reconectado": True,
                     "socket_anterior": anterior if anterior is not ws else None,
                 }, None
+
+            if token is not None and (self.jugadores or self.espectadores):
+                # Un token desconocido nunca crea una sesión silenciosamente:
+                # la interfaz debe pedir al usuario que vuelva a identificarse.
+                return None, ERROR_SESION_EXPIRADA
 
             # Sin sockets activos, un token inválido o una entrada nueva no
             # puede conservar la partida abandonada ni entrar como espectador.

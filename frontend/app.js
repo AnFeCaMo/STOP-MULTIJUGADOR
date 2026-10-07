@@ -168,6 +168,28 @@ function enviarMensaje(objeto) {
   }
 }
 
+function limpiarSesionGuardada() {
+  tokenSesion = "";
+  nombreGuardado = "";
+  miId = null;
+  miNombre = "";
+  esAnfitrion = false;
+  esEspectador = false;
+  avatarSeleccionado = "oso";
+  ["stop_token", "stop_nombre", "stop_codigo_sala", "stop_avatar"].forEach((clave) => {
+    localStorage.removeItem(clave);
+  });
+  const inputNombre = document.getElementById("input-nombre");
+  if (inputNombre) inputNombre.value = "";
+  const accionSala = document.getElementById("accion-sala");
+  if (accionSala) accionSala.value = "crear";
+  const inputCodigo = document.getElementById("input-codigo-sala");
+  if (inputCodigo) inputCodigo.value = "";
+  actualizarCamposCodigoSala();
+  renderizarSelectorAvatares();
+  cambiarPantalla("LOGIN");
+}
+
 // ==================== MANEJO DE MENSAJES DEL SERVIDOR ====================
 function manejarMensajeServidor(msg) {
   const tipo = msg.tipo;
@@ -178,6 +200,11 @@ function manejarMensajeServidor(msg) {
 
   switch (tipo) {
     case "error":
+      if (msg.codigo === "sesion_expirada") {
+        limpiarSesionGuardada();
+        reconectando = false;
+        bannerReconnect.classList.add("hidden");
+      }
       mostrarToast(msg.mensaje || "Ocurrió un error", "error");
       if (reconectando) {
         reconectando = false;

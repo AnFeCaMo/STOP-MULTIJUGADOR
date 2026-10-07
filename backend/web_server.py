@@ -10,7 +10,12 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from backend.servidor import AVATARES, GestorJuego, TIEMPO_PARA_MARCAR_AUSENTE
+from backend.servidor import (
+    AVATARES,
+    ERROR_SESION_EXPIRADA,
+    GestorJuego,
+    TIEMPO_PARA_MARCAR_AUSENTE,
+)
 
 app = FastAPI(title="STOP Multijugador Web")
 gestor_principal = GestorJuego()
@@ -314,8 +319,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         "", None, "La acción de sala o el código no son válidos."
                     )
                 if error_sala:
+                    if token:
+                        error_sala = ERROR_SESION_EXPIRADA
                     await websocket.send_text(json.dumps({
-                        "tipo": "error", "mensaje": error_sala
+                        "tipo": "error",
+                        "mensaje": error_sala,
+                        **({"codigo": "sesion_expirada"} if error_sala == ERROR_SESION_EXPIRADA else {}),
                     }, ensure_ascii=False))
                     continue
                 gestor_contexto.set(sala_seleccionada)
@@ -326,7 +335,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 if error:
                     await websocket.send_text(json.dumps({
                         "tipo": "error",
-                        "mensaje": error
+                        "mensaje": error,
+                        **({"codigo": "sesion_expirada"} if error == ERROR_SESION_EXPIRADA else {}),
                     }, ensure_ascii=False))
                     if not gestor.sesiones_conectadas():
                         programar_limpieza_sala(codigo_sala, gestor_actual())
