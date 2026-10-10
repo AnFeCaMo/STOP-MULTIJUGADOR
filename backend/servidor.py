@@ -6,13 +6,24 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
-from backend.validaciones import evaluar_palabra, normalizar
+from backend.validaciones import CATEGORIAS_CATALOGADAS, evaluar_palabra, normalizar
 
 CATEGORIAS = ["nombre", "apellido", "ciudad", "fruta", "animal", "cosa"]
+CATEGORIA_SIEMPRE_ACTIVA = "color"
+# Categorías con catálogo local. No todas se activan por defecto.
+CATEGORIAS_CATALOGADAS_DISPONIBLES = [c for c in CATEGORIAS_CATALOGADAS if c not in CATEGORIAS]
+ETIQUETAS_CATEGORIA = {
+    "nombre": "Nombre", "apellido": "Apellido", "ciudad": "Ciudad",
+    "fruta": "Fruta", "animal": "Animal", "cosa": "Cosa",
+    "color": "Color",
+}
+DESCRIPCION_CIUDAD = "Incluye ciudades, países, capitales, departamentos, estados, provincias y continentes."
 LETRAS_DISPONIBLES = "ABCDEFGLMPRSTV"
 TIEMPO_PARA_MARCAR_AUSENTE = 300
 UMBRAL_PUNTOS_EXPERTO = 200
 TIEMPO_STOP_RELAMPAGO = 5
+MAX_JUGADORES_POR_SALA = 20
+MAX_ESPECTADORES_POR_SALA = 20
 AVATARES = {
     "oso": "🐻",
     "gallina": "🐔",
@@ -36,7 +47,42 @@ AVATARES = {
     "fantasma": "👻",
     "calabaza": "🎃",
 }
+AVATAR_PERSONA_A_LEGADO = {
+    "persona-01": "oso",
+    "persona-02": "gallina",
+    "persona-03": "gato",
+    "persona-04": "perro",
+    "persona-05": "mono",
+    "persona-06": "zorro",
+    "persona-07": "rana",
+    "persona-08": "panda",
+    "persona-09": "koala",
+    "persona-10": "tigre",
+    "persona-11": "leon",
+    "persona-12": "conejo",
+    "persona-13": "cerdo",
+    "persona-14": "vaca",
+    "persona-15": "pinguino",
+    "persona-16": "unicornio",
+    "persona-17": "robot",
+    "persona-18": "alien",
+    "persona-19": "videojuego",
+    "persona-20": "fantasma",
+}
 AVATAR_PREDETERMINADO = "oso"
+
+
+def normalizar_avatar_id(avatar: Optional[str]) -> Optional[str]:
+    """Acepta los IDs nuevos y los identificadores/emojis de clientes antiguos."""
+    if not isinstance(avatar, str):
+        return None
+    if avatar in AVATAR_PERSONA_A_LEGADO:
+        return AVATAR_PERSONA_A_LEGADO[avatar]
+    if avatar in AVATARES:
+        return avatar
+    return next((avatar_id for avatar_id, emoji in AVATARES.items() if emoji == avatar), None)
+
+
 ERROR_SESION_EXPIRADA = "La sesión guardada ya expiró. Ingresa tu nombre para empezar de nuevo."
 REACCIONES = {
     "jaja": "😂 JAJA",
@@ -64,7 +110,8 @@ class GestorJuego:
         self.letra_actual = ""
         self.ronda_actual = 0
         self.rondas_totales = 4
-        self.categorias_activas = list(CATEGORIAS)
+        self.categorias_activas = [*CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA]
+        self.categorias_personalizadas: Dict[str, str] = {}
         self.letras_disponibles = list(LETRAS_DISPONIBLES)
         self.letras_utilizadas: List[str] = []
         self.partida_terminada = False
@@ -145,7 +192,8 @@ class GestorJuego:
         self.letra_actual = ""
         self.ronda_actual = 0
         self.rondas_totales = 4
-        self.categorias_activas = list(CATEGORIAS)
+        self.categorias_activas = [*CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA]
+        self.categorias_personalizadas = {}
         self.letras_disponibles = list(LETRAS_DISPONIBLES)
         self.letras_utilizadas = []
         self.partida_terminada = False
@@ -184,9 +232,10 @@ class GestorJuego:
                 return None, "El nombre debe ser texto."
             if token is not None and not isinstance(token, str):
                 return None, "La sesión no es válida."
-            if avatar is not None and (not isinstance(avatar, str) or avatar not in AVATARES):
+            avatar_normalizado = normalizar_avatar_id(avatar) if avatar is not None else None
+            if avatar is not None and avatar_normalizado is None:
                 return None, "El avatar seleccionado no es válido."
-            avatar_seleccionado = avatar or AVATAR_PREDETERMINADO
+            avatar_seleccionado = avatar_normalizado or AVATAR_PREDETERMINADO
             nombre_limpio = nombre.strip()
             if not nombre_limpio:
                 return None, "El nombre es obligatorio."
@@ -229,6 +278,12 @@ class GestorJuego:
                 self._cancelar_reinicio_sala()
                 self._reiniciar_sala_vacia_locked()
 
+            es_espectador = self.estado_juego in {"JUEGO", "VOTACION"}
+            if es_espectador and len(self.espectadores) >= MAX_ESPECTADORES_POR_SALA:
+                return None, "La sala alcanzó el límite de espectadores."
+            if not es_espectador and len(self.jugadores) >= MAX_JUGADORES_POR_SALA:
+                return None, "La sala alcanzó el límite de jugadores."
+
             for data in list(self.jugadores.values()) + list(self.espectadores.values()):
                 if data["nombre"].casefold() == nombre_limpio.casefold():
                     return None, f"Ya existe un jugador con el nombre '{nombre_limpio}'."
@@ -239,7 +294,6 @@ class GestorJuego:
             j_id = self.id_counter
             self.id_counter += 1
             nuevo_token = secrets.token_urlsafe(32)
-            es_espectador = self.estado_juego in {"JUEGO", "VOTACION"}
             es_anfitrion = self.anfitrion_id is None or not any(d.get("ws") for d in self.jugadores.values())
             if es_anfitrion and not es_espectador:
                 self.anfitrion_id = j_id
@@ -291,18 +345,31 @@ class GestorJuego:
         return "🟢 Conectado"
 
     def _emocion_por_presencia(self, sesion: Dict[str, Any], estado_ronda: Optional[str] = None) -> str:
-        if sesion.get("ws") is None:
-            if sesion.get("reconectando"):
-                return "🔄"
-            desconectado_en = sesion.get("desconectado_en")
-            if desconectado_en is not None and time.time() - desconectado_en >= TIEMPO_PARA_MARCAR_AUSENTE:
-                return "😴"
-            return "😴"
-        if estado_ronda == "escribiendo":
-            return "🤔"
-        if sesion.get("es_espectador"):
-            return "👀"
-        return "😎"
+        if sesion.get("ws") is None or sesion.get("es_espectador"):
+            return "normal"
+        if self.estado_juego == "JUEGO":
+            if self.vence_en_monotonic and self.vence_en_monotonic - asyncio.get_running_loop().time() <= 10:
+                return "nervioso"
+            respuestas = sesion.get("respuestas_ronda", {})
+            if any(str(respuesta).strip() for respuesta in respuestas.values()):
+                return "concentrado"
+            tiempo_transcurrido = asyncio.get_running_loop().time() - self.ronda_iniciada_monotonic
+            return "competitivo" if tiempo_transcurrido <= 3 else "pensativo"
+        if self.estado_juego == "VOTACION":
+            return "suspenso"
+        return "normal"
+
+    def _evento_emocion(self, sesion_id: int) -> str:
+        """Clave estable para que los clientes no repitan una animación en cada actualización."""
+        sesion = self.jugadores.get(sesion_id) or self.espectadores.get(sesion_id, {})
+        estado_respuesta = None
+        if self.estado_juego == "JUEGO" and sesion_id in self.jugadores:
+            respuestas = sesion.get("respuestas_ronda", {})
+            estado_respuesta = "completó" if respuestas and all(str(v).strip() for v in respuestas.values()) else "escribiendo"
+        emocion = self._emocion_por_presencia(sesion, estado_respuesta) if sesion else "normal"
+        if self.estado_juego == "VOTACION" and self._stopper_id() == sesion_id:
+            return f"stop:{self.ronda_actual}:{sesion_id}:{emocion}"
+        return f"{self.ronda_actual}:{self.estado_juego}:{sesion_id}:{emocion}"
 
     def marcar_reconectando(self, token: str):
         registro, es_espectador = self._buscar_sesion(token)
@@ -443,6 +510,78 @@ class GestorJuego:
 
             return True, None
 
+    def _categorias_info(self) -> List[Dict[str, Any]]:
+        info = []
+        for categoria in self.categorias_activas:
+            info.append({
+                "id": categoria,
+                "nombre": self.etiqueta_categoria(categoria),
+                "personalizada": categoria in self.categorias_personalizadas,
+            })
+        return info
+
+    def categorias_disponibles(self) -> List[Dict[str, Any]]:
+        resultado = []
+        for categoria in CATEGORIAS:
+            resultado.append({
+                "id": categoria,
+                "nombre": ETIQUETAS_CATEGORIA.get(categoria, categoria.title()),
+                "personalizada": False,
+                "catalogada": True,
+                **({"descripcion": DESCRIPCION_CIUDAD} if categoria == "ciudad" else {}),
+            })
+        for categoria in CATEGORIAS_CATALOGADAS_DISPONIBLES:
+            resultado.append({
+                "id": categoria,
+                "nombre": ETIQUETAS_CATEGORIA.get(categoria, categoria.title()),
+                "personalizada": False,
+                "catalogada": True,
+            })
+        for categoria, nombre in self.categorias_personalizadas.items():
+            resultado.append({
+                "id": categoria,
+                "nombre": nombre,
+                "personalizada": True,
+                "catalogada": False,
+            })
+        return resultado
+
+    def etiqueta_categoria(self, categoria: str) -> str:
+        if categoria in self.categorias_personalizadas:
+            return self.categorias_personalizadas[categoria]
+        return ETIQUETAS_CATEGORIA.get(categoria, str(categoria).replace("_", " ").title())
+
+    def _crear_id_categoria_personalizada(self, nombre: str) -> str:
+        base = normalizar(nombre).lower()
+        base = "-".join(parte for parte in base.replace("/", " ").split() if parte)
+        base = "".join(caracter for caracter in base if caracter.isalnum() or caracter == "-")[:45].strip("-")
+        if not base:
+            base = "categoria"
+        candidato = f"personalizada:{base}"
+        contador = 2
+        while candidato in self.categorias_personalizadas or candidato in CATEGORIAS or candidato in CATEGORIAS_CATALOGADAS_DISPONIBLES:
+            candidato = f"personalizada:{base}-{contador}"
+            contador += 1
+        return candidato
+
+    async def agregar_categoria_personalizada(self, jugador_id: int, nombre: Any):
+        async with self.lock:
+            if jugador_id != self.anfitrion_id:
+                return False, "Solamente el anfitrión puede agregar categorías."
+            if self.estado_juego != "SALA" or self.ronda_actual != 0:
+                return False, "Las categorías solo pueden modificarse antes de iniciar la partida."
+            if not isinstance(nombre, str):
+                return False, "El nombre de la categoría debe ser texto."
+            nombre_limpio = " ".join(nombre.strip().split())
+            if not 2 <= len(nombre_limpio) <= 40:
+                return False, "La categoría debe tener entre 2 y 40 caracteres."
+            normalizada = normalizar(nombre_limpio).lower()
+            if any(normalizar(item["nombre"]).lower() == normalizada for item in self.categorias_disponibles()):
+                return False, "Esa categoría ya existe."
+            categoria_id = self._crear_id_categoria_personalizada(nombre_limpio)
+            self.categorias_personalizadas[categoria_id] = nombre_limpio
+            return True, None
+
     async def actualizar_configuracion(self, jugador_id: int, rondas: Any, categorias: Any):
         async with self.lock:
             if jugador_id != self.anfitrion_id:
@@ -453,14 +592,22 @@ class GestorJuego:
                 return False, "La cantidad de rondas debe estar entre 4 y 10."
             if not isinstance(categorias, list) or any(not isinstance(c, str) for c in categorias):
                 return False, "Selecciona categorías válidas."
-            if len(set(categorias)) != len(categorias) or any(c not in CATEGORIAS for c in categorias):
+            if len(set(categorias)) != len(categorias):
                 return False, "La selección contiene categorías inválidas."
-            if len(categorias) < 3:
+            disponibles = set(CATEGORIAS) | set(CATEGORIAS_CATALOGADAS_DISPONIBLES) | set(self.categorias_personalizadas)
+            if any(c not in disponibles for c in categorias):
+                return False, "La selección contiene categorías inválidas o no disponibles."
+            categorias_efectivas = list(categorias)
+            if CATEGORIA_SIEMPRE_ACTIVA not in categorias_efectivas:
+                categorias_efectivas.append(CATEGORIA_SIEMPRE_ACTIVA)
+            if len(categorias_efectivas) < 3:
                 return False, "Debes activar al menos 3 categorías."
+            if len(categorias_efectivas) > 12:
+                return False, "Puedes activar como máximo 12 categorías por partida."
             if rondas > len(self.letras_disponibles):
                 return False, f"Solo hay {len(self.letras_disponibles)} letras disponibles para evitar repeticiones."
             self.rondas_totales = rondas
-            self.categorias_activas = [cat for cat in CATEGORIAS if cat in categorias]
+            self.categorias_activas = categorias_efectivas
             return True, None
 
     async def actualizar_respuestas(self, jugador_id: int, respuestas: Dict[str, str]):
@@ -510,6 +657,14 @@ class GestorJuego:
                 j_id for j_id, jugador in self.jugadores.items()
                 if jugador.get("ws") is not None and j_id not in autores
             ]
+            # Si nadie puede votar porque todos escribieron la misma respuesta,
+            # habilitar una votación abierta a sus autores en vez de rechazarla
+            # automáticamente por falta de votantes.
+            if not votantes:
+                votantes = [
+                    j_id for j_id in autores
+                    if j_id in self.jugadores and self.jugadores[j_id].get("ws") is not None
+                ]
             resultado.append({
                 **candidato,
                 "votantes": votantes,
@@ -1037,7 +1192,8 @@ class GestorJuego:
             self.letras_disponibles = list(LETRAS_DISPONIBLES)
             self.partida_terminada = False
             self.rondas_totales = 4
-            self.categorias_activas = list(CATEGORIAS)
+            self.categorias_activas = [*CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA]
+            self.categorias_personalizadas = {}
             self.vence_en = 0.0
             self.vence_en_monotonic = 0.0
             self.ronda_iniciada_monotonic = 0.0
@@ -1070,12 +1226,13 @@ class GestorJuego:
                     "conectado": d.get("ws") is not None,
                     "estado_presencia": self._estado_presencia(d),
                     "emocion": self._emocion_por_presencia(d),
+                    "emocion_evento": self._evento_emocion(d["id"]),
                 }
                 for d in self.jugadores.values()
             ],
             "anfitrion_id": self.anfitrion_id,
             "estado": self.estado_juego,
-            "configuracion": {"rondas": self.rondas_totales, "categorias": list(self.categorias_activas), "min_categorias": 3},
+            "configuracion": {"rondas": self.rondas_totales, "categorias": list(self.categorias_activas), "min_categorias": 3, "categorias_info": self._categorias_info(), "categorias_disponibles": self.categorias_disponibles()},
         }
 
     def serializar_ronda(self):
@@ -1101,6 +1258,7 @@ class GestorJuego:
                 "conectado": jugador.get("ws") is not None,
                 "estado_presencia": self._estado_presencia(jugador, estado_respuesta),
                 "emocion": self._emocion_por_presencia(jugador, estado_respuesta),
+                "emocion_evento": self._evento_emocion(jugador["id"]),
                 "estado": estado_respuesta,
             })
         return {
@@ -1111,6 +1269,7 @@ class GestorJuego:
             "servidor_ahora": time.time(),
             "anfitrion_id": self.anfitrion_id,
             "categorias": list(self.categorias_activas),
+            "categorias_info": self._categorias_info(),
             "jugadores": jugadores,
             "espectadores": [
                 {
@@ -1119,6 +1278,7 @@ class GestorJuego:
                     "avatar": AVATARES.get(d.get("avatar"), AVATARES[AVATAR_PREDETERMINADO]),
                     "estado": "observando",
                     "emocion": self._emocion_por_presencia(d),
+                    "emocion_evento": self._evento_emocion(d["id"]),
                     "estado_presencia": (
                         "👀 Espectador" if d.get("ws") is not None else self._estado_presencia(d)
                     ),
@@ -1174,9 +1334,10 @@ class GestorJuego:
                 "conectado": conectada,
                 "estado_presencia": self._estado_presencia(jugador),
                 "emocion": (
-                    "😱" if self.quien_stop == jugador["nombre"]
-                    else self._emocion_por_presencia(jugador)
+                    "sorprendido" if conectada and self._stopper_id() == jugador_id_actual
+                    else "suspenso" if jugador.get("ws") is not None else "normal"
                 ),
+                "emocion_evento": self._evento_emocion(jugador_id_actual),
                 "total": jugador["total"],
                 "estado": estado,
             })
@@ -1195,12 +1356,15 @@ class GestorJuego:
                     "avatar": AVATARES.get(d.get("avatar"), AVATARES[AVATAR_PREDETERMINADO]),
                     "estado": "observando",
                     "emocion": self._emocion_por_presencia(d),
+                    "emocion_evento": self._evento_emocion(d["id"]),
                     "estado_presencia": (
                         "👀 Espectador" if d.get("ws") is not None else self._estado_presencia(d)
                     ),
                 }
                 for d in self.espectadores.values()
             ],
+            "categorias": list(self.categorias_activas),
+            "categorias_info": self._categorias_info(),
             "candidatos": pendientes,
         }
 
@@ -1252,18 +1416,24 @@ class GestorJuego:
         maximo_total = max((jugador["total"] for jugador in self.jugadores.values()), default=0)
         for d in self.jugadores.values():
             if self.partida_terminada:
-                emocion = "🏆" if d["total"] == maximo_total and maximo_total > 0 else "😭"
+                emocion = "muy_feliz" if d["total"] == maximo_total and maximo_total > 0 else "triste"
+            elif any(
+                detalle.get("estado") == "votacion_rechazada"
+                for detalle in d.get("detalle_respuestas", {}).values()
+            ):
+                emocion = "frustrado"
             elif d.get("bonus_ronda", 0) > 0:
-                emocion = "🔥"
+                emocion = "orgulloso"
             elif d["puntos_ronda"] == maximo_ronda and maximo_ronda > 0:
-                emocion = "🥳"
+                emocion = "feliz"
             else:
-                emocion = "😭"
+                emocion = "triste"
             resultados.append({
                 "id": d["id"],
                 "nombre": d["nombre"],
                 "avatar": AVATARES.get(d.get("avatar"), AVATARES[AVATAR_PREDETERMINADO]),
                 "emocion": emocion,
+                "emocion_evento": f"{self.ronda_actual}:resultados:{d['id']}:{emocion}",
                 "es_anfitrion": d["es_anfitrion"],
                 "conectado": d.get("ws") is not None,
                 "estado_presencia": self._estado_presencia(d),
@@ -1281,6 +1451,7 @@ class GestorJuego:
             "tipo": "resultados",
             "ronda": self.ronda_actual,
             "categorias": list(self.categorias_activas),
+            "categorias_info": self._categorias_info(),
             "letras_utilizadas": list(self.letras_utilizadas),
             "letra": self.letra_actual,
             "quien_stop": self.quien_stop,

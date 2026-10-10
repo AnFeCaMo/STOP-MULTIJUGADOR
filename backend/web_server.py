@@ -10,21 +10,23 @@ from dataclasses import dataclass, field
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.servidor import (
     AVATARES,
+    normalizar_avatar_id,
     ERROR_SESION_EXPIRADA,
     GestorJuego,
+    MAX_ESPECTADORES_POR_SALA,
+    MAX_JUGADORES_POR_SALA,
     TIEMPO_PARA_MARCAR_AUSENTE,
 )
 
-app = FastAPI(title="STOP Multijugador Web", version="5.0.0")
+app = FastAPI(title="STOP Multijugador Web", version="6.0.0")
 ALFABETO_CODIGO_SALA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 LONGITUD_CODIGO_SALA = 4
 MAX_SALAS = 100
-MAX_JUGADORES_POR_SALA = 20
-MAX_ESPECTADORES_POR_SALA = 20
 MAX_NOMBRE = 20
 MAX_MENSAJE_BYTES = 64 * 1024
 MAX_MENSAJES_VENTANA = 40
@@ -248,7 +250,16 @@ async def esperar_fin_ronda(numero_ronda: int):
     tarea_actual = asyncio.current_task()
     clave = id(gestor_actual())
     try:
-        await asyncio.sleep(gestor.duracion_ronda)
+        while gestor.estado_juego == "JUEGO" and gestor.ronda_actual == numero_ronda:
+            restante = gestor.vence_en_monotonic - asyncio.get_running_loop().time()
+            if restante <= 0:
+                break
+            if restante > 10:
+                await asyncio.sleep(restante - 10)
+                continue
+            await asyncio.sleep(min(1.0, restante))
+            if gestor.estado_juego == "JUEGO" and gestor.ronda_actual == numero_ronda:
+                await broadcast_estado_actual()
         cerrada = await gestor.finalizar_por_tiempo(numero_ronda)
         if not cerrada:
             return
@@ -267,7 +278,13 @@ async def broadcast_fase_cerrada():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "5.0.0", "salas_activas": len(salas.salas)}
+    return {"status": "ok", "version": "6.0.0", "salas_activas": len(salas.salas)}
+
+
+@app.get("/audio/background.mp3", include_in_schema=False)
+async def audio_fondo():
+    ruta_audio = os.path.join(FRONTEND_DIR, "assets", "audio", "background.mp3")
+    return FileResponse(ruta_audio, media_type="audio/mpeg")
 
 
 @app.websocket("/ws")
@@ -348,12 +365,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 if token is not None and not isinstance(token, str):
                     await websocket.send_text(json.dumps({"tipo": "error", "mensaje": "La sesión no es válida."}))
                     continue
-                avatar = mensaje.get("avatar")
-                if avatar is not None and (not isinstance(avatar, str) or avatar not in AVATARES):
+                avatar = mensaje.get("avatar_id", mensaje.get("avatar"))
+                avatar_normalizado = normalizar_avatar_id(avatar) if avatar is not None else None
+                if avatar is not None and avatar_normalizado is None:
                     await websocket.send_text(json.dumps({
                         "tipo": "error", "mensaje": "El avatar seleccionado no es válido."
                     }, ensure_ascii=False))
                     continue
+                if avatar is not None:
+                    avatar = avatar_normalizado
                 accion_sala = mensaje.get("accion_sala")
                 codigo_solicitado = mensaje.get("codigo_sala", "")
                 if accion_sala == "unir" and isinstance(codigo_solicitado, str):
@@ -380,14 +400,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 gestor_contexto.set(sala_seleccionada)
                 codigo_sala_contexto.set(codigo_sala)
                 cancelar_limpieza_sala(codigo_sala)
-                if token is None:
-                    if sala_seleccionada.estado_juego == "SALA" and len(sala_seleccionada.jugadores) >= MAX_JUGADORES_POR_SALA:
-                        await websocket.send_text(json.dumps({"tipo": "error", "mensaje": "La sala alcanzó el límite de jugadores."}, ensure_ascii=False))
-                        continue
-                    if sala_seleccionada.estado_juego in {"JUEGO", "VOTACION"} and len(sala_seleccionada.espectadores) >= MAX_ESPECTADORES_POR_SALA:
-                        await websocket.send_text(json.dumps({"tipo": "error", "mensaje": "La sala alcanzó el límite de espectadores."}, ensure_ascii=False))
-                        continue
-
                 sesion, error = await gestor.conectar_sesion(websocket, nombre, token, avatar)
                 if error:
                     await websocket.send_text(json.dumps({
@@ -460,7 +472,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.close()
                 break
 
-            elif es_espectador and tipo in {"iniciar_ronda", "respuestas", "stop", "voto", "configuracion"}:
+            elif es_espectador and tipo in {"iniciar_ronda", "respuestas", "stop", "voto", "configuracion", "agregar_categoria"}:
                 await websocket.send_text(json.dumps({
                     "tipo": "error",
                     "mensaje": "Los espectadores no pueden realizar acciones de juego."
@@ -491,6 +503,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         esperar_fin_ronda(gestor.ronda_actual)
                     )
                     await broadcast(gestor.serializar_ronda())
+
+            elif tipo == "agregar_categoria":
+                ok, error = await gestor.agregar_categoria_personalizada(
+                    sesion_id, mensaje.get("nombre")
+                )
+                if not ok:
+                    await websocket.send_text(json.dumps({
+                        "tipo": "error", "mensaje": error
+                    }, ensure_ascii=False))
+                else:
+                    await broadcast(gestor.serializar_sala())
 
             elif tipo == "configuracion":
                 ok, error = await gestor.actualizar_configuracion(
@@ -591,6 +614,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as exc:
         print(f"Excepción en websocket: {exc}")
     finally:
+        # Una conexión puede cerrarse antes de enviar "conexion" (por ejemplo,
+        # si el navegador abandona el intento inicial). En ese caso todavía no
+        # existe una sala ni una sesión que limpiar.
+        if sesion_id is None or gestor_contexto.get() is None:
+            return
+
         nombre_desconectado = await gestor.desconectar(websocket)
         if nombre_desconectado:
             print(f"Jugador desconectado: {nombre_desconectado}")

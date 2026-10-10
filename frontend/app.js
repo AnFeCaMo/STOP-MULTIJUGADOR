@@ -1,28 +1,28 @@
 // ==================== CONFIGURACIÓN Y ESTADO ====================
 const CATEGORIAS = ["nombre", "apellido", "ciudad", "fruta", "animal", "cosa"];
-const AVATARES = [
-  { id: "oso", emoji: "🐻", nombre: "Oso" },
-  { id: "gallina", emoji: "🐔", nombre: "Gallina" },
-  { id: "gato", emoji: "🐱", nombre: "Gato" },
-  { id: "perro", emoji: "🐶", nombre: "Perro" },
-  { id: "mono", emoji: "🐵", nombre: "Mono" },
-  { id: "zorro", emoji: "🦊", nombre: "Zorro" },
-  { id: "rana", emoji: "🐸", nombre: "Rana" },
-  { id: "panda", emoji: "🐼", nombre: "Panda" },
-  { id: "koala", emoji: "🐨", nombre: "Koala" },
-  { id: "tigre", emoji: "🐯", nombre: "Tigre" },
-  { id: "leon", emoji: "🦁", nombre: "León" },
-  { id: "conejo", emoji: "🐰", nombre: "Conejo" },
-  { id: "cerdo", emoji: "🐷", nombre: "Cerdo" },
-  { id: "vaca", emoji: "🐮", nombre: "Vaca" },
-  { id: "pinguino", emoji: "🐧", nombre: "Pingüino" },
-  { id: "unicornio", emoji: "🦄", nombre: "Unicornio" },
-  { id: "robot", emoji: "🤖", nombre: "Robot" },
-  { id: "alien", emoji: "👽", nombre: "Alien" },
-  { id: "videojuego", emoji: "👾", nombre: "Videojuego" },
-  { id: "fantasma", emoji: "👻", nombre: "Fantasma" },
-  { id: "calabaza", emoji: "🎃", nombre: "Calabaza" }
-];
+const CATEGORIA_SIEMPRE_ACTIVA = "color";
+const AVATARES = window.STOP_AVATAR_CATALOG;
+const EMOCIONES_AVATAR = new Set(window.STOP_AVATAR_EMOTIONS.map((estado) => estado.id));
+const AVATAR_PREDETERMINADO = "persona-01";
+const AVATAR_FALLBACK_DATA_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='64' fill='%23334155'/%3E%3Ccircle cx='64' cy='48' r='24' fill='%23f1c9a5'/%3E%3Cpath d='M20 122c3-28 20-42 44-42s41 14 44 42' fill='%236366f1'/%3E%3Cpath d='M40 42c2-19 13-28 26-28 15 0 25 11 25 28-12-7-34-9-51 0' fill='%233b2f2f'/%3E%3C/svg%3E";
+
+function buscarAvatar(referencia) {
+  return AVATARES.find((avatar) => (
+    avatar.id === referencia
+    || avatar.legacyId === referencia
+    || avatar.legacyEmoji === referencia
+    || avatar.legacyAliases?.includes(referencia)
+  )) || AVATARES[0];
+}
+
+function normalizarAvatarGuardado(referencia) {
+  return buscarAvatar(referencia).id;
+}
+
+function camposAvatarConexion() {
+  const seleccionado = buscarAvatar(avatarSeleccionado);
+  return { avatar: seleccionado.legacyId, avatar_id: seleccionado.id };
+}
 const REACCIONES = [
   { id: "jaja", texto: "😂 JAJA" },
   { id: "facil", texto: "😎 Fácil" },
@@ -35,14 +35,30 @@ const REACCIONES = [
   { id: "ganamos", texto: "🥳 ¡Ganamos!" },
   { id: "buena_partida", texto: "❤️ Buena partida" }
 ];
-let categoriasActivas = [...CATEGORIAS];
-const ETIQUETAS_CATEGORIA = { nombre: "Nombre", apellido: "Apellido", ciudad: "Ciudad", fruta: "Fruta", animal: "Animal", cosa: "Cosa" };
+let categoriasActivas = [...CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA];
+let METADATOS_CATEGORIAS = [
+  { id: "nombre", nombre: "Nombre", personalizada: false, catalogada: true },
+  { id: "apellido", nombre: "Apellido", personalizada: false, catalogada: true },
+  { id: "ciudad", nombre: "Ciudad", personalizada: false, catalogada: true, descripcion: "Incluye ciudades, países, capitales, departamentos, estados, provincias y continentes." },
+  { id: "fruta", nombre: "Fruta", personalizada: false, catalogada: true },
+  { id: "animal", nombre: "Animal", personalizada: false, catalogada: true },
+  { id: "cosa", nombre: "Cosa", personalizada: false, catalogada: true },
+  { id: "color", nombre: "Color", personalizada: false, catalogada: true },
+];
+
+function etiquetaCategoria(categoria) {
+  const meta = METADATOS_CATEGORIAS.find((item) => item.id === categoria);
+  return meta ? meta.nombre : categoria.replace(/^personalizada:/, "").replace(/-/g, " ");
+}
 
 let socket = null;
 let reconectarInterval = null;
 let tokenSesion = localStorage.getItem("stop_token") || "";
 let nombreGuardado = localStorage.getItem("stop_nombre") || "";
-let avatarSeleccionado = localStorage.getItem("stop_avatar") || "oso";
+let avatarSeleccionado = normalizarAvatarGuardado(localStorage.getItem("stop_avatar") || AVATAR_PREDETERMINADO);
+if (localStorage.getItem("stop_avatar") !== avatarSeleccionado) {
+  localStorage.setItem("stop_avatar", avatarSeleccionado);
+}
 let reconectando = false;
 let sesionReemplazada = false;
 let miId = null;
@@ -58,13 +74,17 @@ let animacionLetraId = 0;
 let ultimaAnimacionLetra = null;
 let sonidoActivado = localStorage.getItem("stop_sonido") !== "0";
 let musicaActivada = localStorage.getItem("stop_musica") !== "0";
-let volumenAudio = Number(localStorage.getItem("stop_volumen_audio") ?? "0.35");
-if (!Number.isFinite(volumenAudio)) volumenAudio = 0.35;
-volumenAudio = Math.min(1, Math.max(0, volumenAudio));
+const volumenAudioAnterior = localStorage.getItem("stop_volumen_audio");
+let volumenMusica = Number(localStorage.getItem("stop_volumen_musica") ?? volumenAudioAnterior ?? "0.35");
+let volumenSonido = Number(localStorage.getItem("stop_volumen_sonido") ?? volumenAudioAnterior ?? "0.35");
+if (!Number.isFinite(volumenMusica)) volumenMusica = 0.35;
+if (!Number.isFinite(volumenSonido)) volumenSonido = 0.35;
+volumenMusica = Math.min(1, Math.max(0, volumenMusica));
+volumenSonido = Math.min(1, Math.max(0, volumenSonido));
+let reproductorMusica = null;
 let audioContext = null;
-let gananciaMusica = null;
-let osciladoresMusica = [];
-let intervaloMusica = null;
+let gananciaEfectos = null;
+let audioDesbloqueado = false;
 let toastTimeout = null;
 let rondaConEfectoStop = null;
 let rondaConSonidoVotacion = null;
@@ -72,6 +92,8 @@ let rondaConSonidoResultados = null;
 let ultimaAnimacionPuntaje = null;
 let temporizadoresResultado = [];
 const eventosConfeti = new Set();
+const eventosEmocionAnimados = new Set();
+const temporizadoresSorpresa = new Map();
 
 // Elementos DOM principales
 const toastEl = document.getElementById("toast");
@@ -111,7 +133,7 @@ function inicializarWebSocket() {
         tipo: "conexion",
         nombre: nombreGuardado,
         token: tokenSesion,
-        avatar: avatarSeleccionado,
+        ...camposAvatarConexion(),
         accion_sala: "unir",
         codigo_sala: codigoSalaGuardado,
       });
@@ -193,6 +215,8 @@ function limpiarSesionGuardada() {
 // ==================== MANEJO DE MENSAJES DEL SERVIDOR ====================
 function manejarMensajeServidor(msg) {
   const tipo = msg.tipo;
+  const miEstadoEmocional = (msg.jugadores || []).find((jugador) => jugador.id === miId);
+  if (miEstadoEmocional) actualizarEmocionAvatarUsuario(miEstadoEmocional);
   if (Object.prototype.hasOwnProperty.call(msg, "espectador")) {
     esEspectador = !!msg.espectador;
     actualizarInfoUsuario();
@@ -235,7 +259,7 @@ function manejarMensajeServidor(msg) {
         const codigoSalaEl = document.getElementById("codigo-sala-activo");
         if (codigoSalaEl) codigoSalaEl.textContent = msg.codigo_sala;
       }
-      avatarSeleccionado = AVATARES.some((avatar) => avatar.id === msg.avatar) ? msg.avatar : "oso";
+      avatarSeleccionado = normalizarAvatarGuardado(msg.avatar_id || msg.avatar || AVATAR_PREDETERMINADO);
       localStorage.setItem("stop_token", tokenSesion);
       localStorage.setItem("stop_nombre", nombreGuardado);
       localStorage.setItem("stop_avatar", avatarSeleccionado);
@@ -294,68 +318,107 @@ function manejarMensajeServidor(msg) {
 }
 
 // ==================== ANIMACIONES Y SONIDO ====================
+// Los efectos se sintetizan localmente; la música de fondo usa la pista del proyecto.
+// El navegador exige una interacción del usuario antes de permitir audio con volumen.
 function obtenerAudioContext() {
   try {
-    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioContext.state === "suspended") audioContext.resume();
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) return null;
+    if (!audioContext) {
+      audioContext = new AudioCtor();
+      gananciaEfectos = audioContext.createGain();
+      gananciaEfectos.gain.value = volumenSonido * 0.8;
+      gananciaEfectos.connect(audioContext.destination);
+    }
+    // No asumir que resume() terminó: algunos navegadores tardan en habilitar el audio.
+    audioDesbloqueado = audioContext.state === "running";
     return audioContext;
-  } catch (_) { return null; }
+  } catch (_) {
+    return null;
+  }
+}
+
+function desbloquearAudio() {
+  const ctx = obtenerAudioContext();
+  if (!ctx) {
+    mostrarToast("Tu navegador no pudo iniciar el audio. Prueba actualizar la página.", "error");
+    return;
+  }
+  const activar = () => {
+    audioDesbloqueado = ctx.state === "running";
+    if (audioDesbloqueado && musicaActivada) iniciarMusicaFondo();
+  };
+  if (ctx.state === "running") {
+    activar();
+    return;
+  }
+  // resume() debe ejecutarse directamente desde una interacción del usuario.
+  ctx.resume().then(activar).catch(() => {
+    audioDesbloqueado = false;
+    mostrarToast("El navegador bloqueó el audio. Pulsa Música activada para intentarlo de nuevo.", "error");
+  });
 }
 
 function reproducirSonido(tipo) {
-  if (!sonidoActivado || volumenAudio === 0) return;
+  if (!sonidoActivado || volumenSonido === 0) return;
   const ctx = obtenerAudioContext();
-  if (!ctx) return;
+  if (!ctx || !gananciaEfectos) return;
   const patrones = {
-    tic: [[620, 0.04, 0.035]],
-    suspenso: [[740, 0.08, 0.045], [620, 0.11, 0.06]],
-    ronda: [[440, 0.07, 0.06], [660, 0.08, 0.07], [880, 0.12, 0.08]],
-    stop: [[220, 0.08, 0.08], [110, 0.16, 0.12]],
-    alerta: [[880, 0.09, 0.07], [660, 0.12, 0.08]],
-    impacto: [[90, 0.12, 0.16], [55, 0.2, 0.12]],
-    tiempo: [[180, 0.16, 0.1], [120, 0.2, 0.12]],
-    votacion: [[523, 0.08, 0.045], [659, 0.11, 0.055]],
-    resultados: [[392, 0.1, 0.045], [494, 0.14, 0.05]],
-    ganador: [[523, 0.08, 0.07], [659, 0.08, 0.07], [784, 0.16, 0.1], [1047, 0.25, 0.12]],
-    derrota: [[294, 0.12, 0.055], [220, 0.16, 0.06], [196, 0.22, 0.05]],
-    logro: [[784, 0.07, 0.055], [988, 0.09, 0.06], [1175, 0.16, 0.07]],
-    punto: [[740, 0.07, 0.04]]
+    tic: [[620, 0.04, 0.05]],
+    suspenso: [[740, 0.08, 0.10], [620, 0.11, 0.08]],
+    ronda: [[440, 0.07, 0.10], [660, 0.08, 0.11], [880, 0.12, 0.13]],
+    stop: [[220, 0.08, 0.16], [110, 0.16, 0.20]],
+    alerta: [[880, 0.09, 0.16], [660, 0.12, 0.18], [880, 0.08, 0.15]],
+    impacto: [[90, 0.12, 0.24], [55, 0.20, 0.20]],
+    tiempo: [[180, 0.16, 0.16], [120, 0.20, 0.18], [90, 0.25, 0.15]],
+    votacion: [[523, 0.08, 0.11], [659, 0.11, 0.13], [523, 0.12, 0.09]],
+    resultados: [[392, 0.10, 0.10], [494, 0.14, 0.12], [587, 0.18, 0.14]],
+    ganador: [[523, 0.08, 0.12], [659, 0.08, 0.13], [784, 0.16, 0.15], [1047, 0.25, 0.20]],
+    derrota: [[294, 0.12, 0.10], [220, 0.16, 0.11], [196, 0.22, 0.09]],
+    logro: [[784, 0.07, 0.11], [988, 0.09, 0.13], [1175, 0.16, 0.16]],
+    punto: [[740, 0.07, 0.08]]
   };
   if (!patrones[tipo]) return;
   let retraso = 0;
-  (patrones[tipo] || []).forEach(([frecuencia, duracion, volumen]) => {
+  patrones[tipo].forEach(([frecuencia, duracion, volumen]) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = ["stop", "impacto"].includes(tipo) ? "sawtooth" : "sine";
-    osc.frequency.value = frecuencia;
-    const volumenFinal = Math.max(0.0001, volumen * volumenAudio);
+    osc.type = ["stop", "impacto", "tiempo"].includes(tipo) ? "sawtooth" : "sine";
+    osc.frequency.setValueAtTime(frecuencia, ctx.currentTime + retraso);
+    const volumenFinal = Math.max(0.0001, volumen);
     gain.gain.setValueAtTime(0.0001, ctx.currentTime + retraso);
-    gain.gain.exponentialRampToValueAtTime(volumenFinal, ctx.currentTime + retraso + 0.01);
+    gain.gain.exponentialRampToValueAtTime(volumenFinal, ctx.currentTime + retraso + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + retraso + duracion);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(gananciaEfectos);
     osc.start(ctx.currentTime + retraso);
-    osc.stop(ctx.currentTime + retraso + duracion + 0.02);
-    retraso += duracion * 0.85;
+    osc.stop(ctx.currentTime + retraso + duracion + 0.03);
+    retraso += duracion * 0.82;
   });
 }
 
 function alternarSonido() {
   sonidoActivado = !sonidoActivado;
   localStorage.setItem("stop_sonido", sonidoActivado ? "1" : "0");
-  const boton = document.getElementById("btn-sonido");
-  if (boton) {
-    boton.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
-    boton.setAttribute("aria-pressed", String(sonidoActivado));
+  actualizarControlSonido();
+  mostrarControlVolumen("sonido");
+  if (sonidoActivado) {
+    desbloquearAudio();
+    reproducirSonido("punto");
   }
-  if (sonidoActivado) reproducirSonido("punto");
 }
 
 function alternarMusica() {
   musicaActivada = !musicaActivada;
   localStorage.setItem("stop_musica", musicaActivada ? "1" : "0");
   actualizarControlMusica();
-  if (musicaActivada) iniciarMusicaConcentracion();
-  else detenerMusicaConcentracion();
+  mostrarControlVolumen("musica");
+  reproductorMusica = document.getElementById("musica-fondo");
+  if (reproductorMusica) reproductorMusica.volume = volumenMusica;
+  if (musicaActivada) {
+    iniciarMusicaFondo();
+  } else {
+    detenerMusicaFondo();
+  }
 }
 
 function actualizarControlMusica() {
@@ -365,73 +428,64 @@ function actualizarControlMusica() {
   boton.setAttribute("aria-pressed", String(musicaActivada));
 }
 
-function actualizarVolumenAudio(valor) {
-  volumenAudio = Math.min(1, Math.max(0, Number(valor) / 100));
-  localStorage.setItem("stop_volumen_audio", String(volumenAudio));
-  if (gananciaMusica && audioContext) {
-    gananciaMusica.gain.setTargetAtTime(volumenAudio * 0.12, audioContext.currentTime, 0.12);
+function actualizarControlSonido() {
+  const boton = document.getElementById("btn-sonido");
+  if (!boton) return;
+  boton.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
+  boton.setAttribute("aria-pressed", String(sonidoActivado));
+}
+
+const temporizadoresPanelVolumen = new Map();
+
+function ocultarControlVolumen(opcion) {
+  const panel = document.getElementById(`panel-volumen-${opcion}`);
+  const boton = document.getElementById(`btn-${opcion}`);
+  if (panel) panel.hidden = true;
+  if (boton) boton.setAttribute("aria-expanded", "false");
+  temporizadoresPanelVolumen.delete(opcion);
+}
+
+function programarOcultarControlVolumen(opcion) {
+  clearTimeout(temporizadoresPanelVolumen.get(opcion));
+  temporizadoresPanelVolumen.set(opcion, setTimeout(() => ocultarControlVolumen(opcion), 3000));
+}
+
+function mostrarControlVolumen(tipo) {
+  const opcion = tipo === "sonido" ? "sonido" : "musica";
+  const boton = document.getElementById(`btn-${opcion}`);
+  const panel = document.getElementById(`panel-volumen-${opcion}`);
+  if (panel) panel.hidden = false;
+  if (boton) boton.setAttribute("aria-expanded", "true");
+  programarOcultarControlVolumen(opcion);
+}
+
+function actualizarVolumenMusica(valor) {
+  volumenMusica = Math.min(1, Math.max(0, Number(valor) / 100));
+  localStorage.setItem("stop_volumen_musica", String(volumenMusica));
+  if (reproductorMusica) reproductorMusica.volume = volumenMusica;
+}
+
+function actualizarVolumenSonido(valor) {
+  volumenSonido = Math.min(1, Math.max(0, Number(valor) / 100));
+  localStorage.setItem("stop_volumen_sonido", String(volumenSonido));
+  if (gananciaEfectos && audioContext) {
+    gananciaEfectos.gain.setTargetAtTime(volumenSonido * 0.8, audioContext.currentTime, 0.08);
   }
 }
 
-function iniciarMusicaConcentracion() {
-  if (!musicaActivada || osciladoresMusica.length) return;
-  if (!window.AudioContext && !window.webkitAudioContext) {
-    musicaActivada = false;
-    localStorage.setItem("stop_musica", "0");
-    actualizarControlMusica();
-    mostrarToast("Este navegador no admite música Web Audio.", "error");
-    return;
-  }
-  const ctx = obtenerAudioContext();
-  if (!ctx) {
-    musicaActivada = false;
-    localStorage.setItem("stop_musica", "0");
-    actualizarControlMusica();
-    mostrarToast("No se pudo activar la música.", "error");
-    return;
-  }
-
-  gananciaMusica = ctx.createGain();
-  gananciaMusica.gain.setValueAtTime(0, ctx.currentTime);
-  gananciaMusica.gain.setTargetAtTime(volumenAudio * 0.12, ctx.currentTime, 0.8);
-  gananciaMusica.connect(ctx.destination);
-  osciladoresMusica = [0, 1, 2].map(() => {
-    const oscilador = ctx.createOscillator();
-    const ganancia = ctx.createGain();
-    oscilador.type = "sine";
-    ganancia.gain.value = 0.035;
-    oscilador.connect(ganancia).connect(gananciaMusica);
-    oscilador.start();
-    return oscilador;
+function iniciarMusicaFondo() {
+  if (!musicaActivada) return;
+  if (!reproductorMusica) reproductorMusica = document.getElementById("musica-fondo");
+  if (!reproductorMusica) return;
+  reproductorMusica.volume = volumenMusica;
+  reproductorMusica.play().catch(() => {
+    // El navegador la iniciará cuando el usuario vuelva a interactuar.
   });
-
-  const acordes = [
-    [130.81, 164.81, 196],
-    [110, 130.81, 164.81],
-    [98, 123.47, 146.83],
-    [123.47, 146.83, 185]
-  ];
-  let indiceAcorde = 0;
-  const aplicarAcorde = () => {
-    acordes[indiceAcorde].forEach((frecuencia, indice) => {
-      osciladoresMusica[indice].frequency.setTargetAtTime(frecuencia, ctx.currentTime, 1.5);
-    });
-    indiceAcorde = (indiceAcorde + 1) % acordes.length;
-  };
-  aplicarAcorde();
-  intervaloMusica = window.setInterval(aplicarAcorde, 6000);
 }
 
-function detenerMusicaConcentracion() {
-  if (intervaloMusica) window.clearInterval(intervaloMusica);
-  intervaloMusica = null;
-  osciladoresMusica.forEach((oscilador) => {
-    oscilador.stop();
-    oscilador.disconnect();
-  });
-  osciladoresMusica = [];
-  if (gananciaMusica) gananciaMusica.disconnect();
-  gananciaMusica = null;
+function detenerMusicaFondo() {
+  if (!reproductorMusica) reproductorMusica = document.getElementById("musica-fondo");
+  reproductorMusica?.pause();
 }
 
 function mostrarEfectoJuego(emoji, titulo, subtitulo, clase = "") {
@@ -456,13 +510,6 @@ function mostrarEfectoStop(nombre, jugadorId, ronda) {
   rondaConEfectoStop = claveRonda;
   reproducirSonido("alerta");
   window.setTimeout(() => reproducirSonido("impacto"), 100);
-  const avatar = document.querySelector(`.avatar-animado[data-player-id="${Number(jugadorId)}"]`);
-  if (avatar) {
-    avatar.classList.remove("avatar-stop-salto");
-    void avatar.offsetWidth;
-    avatar.classList.add("avatar-stop-salto");
-    window.setTimeout(() => avatar.classList.remove("avatar-stop-salto"), 900);
-  }
   mostrarEfectoJuego("💥", "💥 STOP 💥", `😂 ¡${nombre.toLocaleUpperCase("es-CO")} DIJO STOP!`, "efecto-stop");
 }
 
@@ -531,6 +578,7 @@ function animarPuntosAlMarcador(origen, destino, puntos) {
 
 // ==================== TRANSICIÓN DE PANTALLAS ====================
 function cambiarPantalla(nuevaPantalla) {
+  const pantallaAnterior = estadoJuego;
   estadoJuego = nuevaPantalla;
   const pantallas = ["LOGIN", "SALA", "JUEGO", "VOTACION", "RESULTADOS"];
 
@@ -545,7 +593,9 @@ function cambiarPantalla(nuevaPantalla) {
     }
   });
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  // Los mensajes de votación/resultados llegan varias veces por WebSocket.
+  // Solo colocar arriba al cambiar de pantalla, nunca en una actualización de la misma.
+  if (pantallaAnterior !== nuevaPantalla) window.scrollTo({ top: 0, behavior: "auto" });
 }
 
 // ==================== ACCIONES DEL USUARIO ====================
@@ -565,7 +615,7 @@ function entrarAlJuego() {
     return;
   }
 
-  if (musicaActivada) iniciarMusicaConcentracion();
+  if (musicaActivada) iniciarMusicaFondo();
 
   const tokenParaSala = accionSala === "unir"
     && codigoSala === localStorage.getItem("stop_codigo_sala")
@@ -574,7 +624,7 @@ function entrarAlJuego() {
   enviarMensaje({
     tipo: "conexion",
     nombre,
-    avatar: avatarSeleccionado,
+    ...camposAvatarConexion(),
     accion_sala: accionSala,
     codigo_sala: accionSala === "unir" ? codigoSala : "",
     ...(tokenParaSala ? { token: tokenParaSala } : {}),
@@ -587,6 +637,7 @@ function actualizarCamposCodigoSala() {
   const codigo = document.getElementById("input-codigo-sala");
   const unirse = selector?.value === "unir";
   campo?.classList.toggle("hidden", !unirse);
+  document.body.classList.toggle("login-union", !!unirse);
   if (codigo) codigo.required = !!unirse;
 }
 
@@ -606,32 +657,105 @@ function seleccionarAvatar(avatarId) {
   actualizarInfoUsuario();
 }
 
-function renderizarAvatar(emoji, clase = "avatar-jugador", jugadorId = null) {
-  const avatar = AVATARES.find((opcion) => opcion.emoji === emoji) || AVATARES[0];
-  const atributoJugador = Number.isInteger(jugadorId) ? ` data-player-id="${jugadorId}"` : "";
-  return `<span class="${clase} avatar-animado" data-avatar="${avatar.id}"${atributoJugador} aria-hidden="true">${avatar.emoji}</span>`;
+function rutaAvatarEmocion(avatar, emocion) {
+  const estado = EMOCIONES_AVATAR.has(emocion) ? emocion : "normal";
+  if (estado === "normal") return avatar.ruta;
+  return avatar.ruta.replace(/\/[^/]+\.svg$/, `/expresiones/${avatar.id}/${estado}.svg`);
 }
 
-function renderizarEmocion(emocion) {
-  const emocionesPermitidas = new Set(["😎", "🤔", "😱", "🥳", "😭", "🔥", "🏆", "😴", "🔄", "👀"]);
-  if (!emocionesPermitidas.has(emocion)) return "";
-  return `<span class="emocion-automatica" aria-label="Emoción ${emocion}">${emocion}</span>`;
+function iniciarSorpresaTemporal(jugadorId, evento) {
+  if (!evento?.startsWith("stop:") || jugadorId === null) return;
+  const anterior = temporizadoresSorpresa.get(jugadorId);
+  if (anterior?.evento === evento) return;
+  if (anterior?.temporizador) window.clearTimeout(anterior.temporizador);
+  const timeout = window.setTimeout(() => {
+    const actual = temporizadoresSorpresa.get(jugadorId);
+    if (actual?.evento !== evento) return;
+    temporizadoresSorpresa.set(jugadorId, { evento, temporizador: null });
+    document.querySelectorAll(`.avatar-imagen[data-player-id="${Number(jugadorId)}"]`).forEach((imagen) => {
+      const avatar = buscarAvatar(imagen.dataset.avatar);
+      imagen.dataset.emocion = "suspenso";
+      imagen.dataset.emocionEvento = evento;
+      imagen.alt = `Avatar de ${avatar.nombre}, en suspenso`;
+      imagen.src = rutaAvatarEmocion(avatar, "suspenso");
+    });
+  }, 1500);
+  temporizadoresSorpresa.set(jugadorId, { evento, temporizador: timeout });
 }
+
+function renderizarAvatar(referencia, clase = "avatar-jugador", jugadorId = null, emocion = "normal", evento = "") {
+  const avatar = buscarAvatar(referencia);
+  const atributoJugador = Number.isInteger(jugadorId) ? ` data-player-id="${jugadorId}"` : "";
+  let estado = EMOCIONES_AVATAR.has(emocion) ? emocion : "normal";
+  const sorpresaFinalizada = estado === "sorprendido" && temporizadoresSorpresa.get(jugadorId)?.evento === evento
+    && temporizadoresSorpresa.get(jugadorId)?.temporizador === null;
+  if (sorpresaFinalizada) estado = "suspenso";
+  const claveEvento = jugadorId === null ? "" : `${jugadorId}:${evento}:${estado}`;
+  const animar = estado !== "normal" && !sorpresaFinalizada && evento && !eventosEmocionAnimados.has(claveEvento);
+  if (animar) {
+    eventosEmocionAnimados.add(claveEvento);
+    if (eventosEmocionAnimados.size > 500) eventosEmocionAnimados.clear();
+  }
+  if (estado === "sorprendido") iniciarSorpresaTemporal(jugadorId, evento);
+  const altEmocion = estado === "normal" ? "" : `, ${EMOCIONES_AVATAR.has(estado) ? window.STOP_AVATAR_EMOTIONS.find((item) => item.id === estado)?.nombre.toLocaleLowerCase("es-CO") : ""}`;
+  return `<img class="avatar-imagen ${clase} avatar-animado${animar ? " avatar-evento" : ""}" data-avatar="${avatar.id}" data-avatar-legado="${avatar.legacyId}" data-emocion="${estado}" data-emocion-evento="${escaparHtml(evento)}"${atributoJugador} src="${rutaAvatarEmocion(avatar, estado)}" alt="Avatar de ${escaparHtml(avatar.nombre)}${altEmocion}" loading="eager" decoding="async">`;
+}
+
+function actualizarEmocionAvatarUsuario(jugador) {
+  const imagen = document.getElementById("avatar-mi-usuario");
+  if (!imagen || !jugador) return;
+  const avatar = buscarAvatar(jugador.avatar_id || jugador.avatar || avatarSeleccionado);
+  let estado = EMOCIONES_AVATAR.has(jugador.emocion) ? jugador.emocion : "normal";
+  const evento = jugador.emocion_evento || "";
+  const sorpresaFinalizada = estado === "sorprendido" && temporizadoresSorpresa.get(jugador.id)?.evento === evento
+    && temporizadoresSorpresa.get(jugador.id)?.temporizador === null;
+  if (sorpresaFinalizada) estado = "suspenso";
+  const claveEvento = `${jugador.id}:${evento}:${estado}`;
+  const mismoEvento = imagen.dataset.emocionEvento === evento && imagen.dataset.emocion === estado;
+  imagen.src = rutaAvatarEmocion(avatar, estado);
+  imagen.alt = `Avatar de ${avatar.nombre}${estado === "normal" ? "" : `, ${window.STOP_AVATAR_EMOTIONS.find((item) => item.id === estado)?.nombre.toLocaleLowerCase("es-CO") || ""}`}`;
+  imagen.dataset.avatar = avatar.id;
+  imagen.dataset.avatarLegado = avatar.legacyId;
+  imagen.dataset.playerId = String(jugador.id);
+  imagen.dataset.emocion = estado;
+  imagen.dataset.emocionEvento = evento;
+  if (!mismoEvento) imagen.classList.remove("avatar-evento");
+  if (estado !== "normal" && evento && !mismoEvento && !eventosEmocionAnimados.has(claveEvento)) {
+    eventosEmocionAnimados.add(claveEvento);
+    imagen.classList.add("avatar-evento");
+  }
+}
+
+document.addEventListener("error", (evento) => {
+  const imagen = evento.target;
+  if (imagen?.tagName !== "IMG" || !imagen.classList.contains("avatar-imagen")) return;
+  if (imagen.dataset.fallbackAplicado) return;
+  imagen.dataset.fallbackAplicado = "true";
+  imagen.src = AVATAR_FALLBACK_DATA_URI;
+  imagen.alt = imagen.alt || "Avatar no disponible";
+}, true);
 
 function renderizarSelectorAvatares() {
   const contenedor = document.getElementById("opciones-avatares");
   if (!contenedor) return;
-  if (!AVATARES.some((avatar) => avatar.id === avatarSeleccionado)) avatarSeleccionado = "oso";
+  if (!AVATARES.some((avatar) => avatar.id === avatarSeleccionado)) avatarSeleccionado = AVATAR_PREDETERMINADO;
   contenedor.replaceChildren();
   AVATARES.forEach((avatar) => {
     const boton = document.createElement("button");
     boton.type = "button";
     boton.className = "opcion-avatar";
     boton.dataset.avatar = avatar.id;
-    boton.textContent = avatar.emoji;
     boton.title = avatar.nombre;
     boton.setAttribute("aria-label", avatar.nombre);
     boton.setAttribute("aria-pressed", String(avatar.id === avatarSeleccionado));
+    const imagen = document.createElement("img");
+    imagen.src = avatar.ruta;
+    imagen.alt = "";
+    imagen.loading = "eager";
+    imagen.decoding = "async";
+    imagen.dataset.avatar = avatar.id;
+    imagen.className = "avatar-imagen avatar-opcion-imagen";
+    boton.appendChild(imagen);
     boton.addEventListener("click", () => seleccionarAvatar(avatar.id));
     contenedor.appendChild(boton);
   });
@@ -663,7 +787,14 @@ function mostrarReaccion(mensaje) {
   const reaccion = REACCIONES.find((opcion) => opcion.id === mensaje.reaccion);
   const burbuja = document.createElement("div");
   burbuja.className = "reaccion-flotante";
-  burbuja.textContent = `${mensaje.avatar || "🐻"} ${mensaje.nombre || "Jugador"}: ${reaccion.texto}`;
+  const avatar = buscarAvatar(mensaje.avatar || AVATAR_PREDETERMINADO);
+  const imagen = document.createElement("img");
+  imagen.className = "avatar-imagen reaccion-avatar";
+  imagen.src = avatar.ruta;
+  imagen.alt = `Avatar de ${avatar.nombre}`;
+  const texto = document.createElement("span");
+  texto.textContent = `${mensaje.nombre || "Jugador"}: ${reaccion.texto}`;
+  burbuja.append(imagen, texto);
   contenedor.appendChild(burbuja);
   while (contenedor.children.length > 5) contenedor.firstElementChild.remove();
   window.setTimeout(() => {
@@ -734,18 +865,23 @@ function confirmarStop() {
 
 // ==================== ACTUALIZACIONES DE UI ====================
 function actualizarInfoUsuario() {
+  const badgeUsuario = document.querySelector("#controles-audio-globales .badge-mi-usuario");
   const labelNombre = document.getElementById("label-mi-nombre");
   const labelRol = document.getElementById("label-mi-rol");
   const avatar = document.getElementById("avatar-mi-usuario");
 
-  if (labelNombre) labelNombre.textContent = miNombre;
+  if (badgeUsuario) badgeUsuario.classList.toggle("hidden", !miNombre);
+  if (labelNombre) labelNombre.textContent = miNombre || "Mi jugador";
   if (labelRol) labelRol.textContent = esEspectador ? "👀 ESPECTADOR" : esAnfitrion ? "👑 Anfitrión" : "Jugador";
   if (avatar) {
-    const seleccionado = AVATARES.find((opcion) => opcion.id === avatarSeleccionado);
-    avatar.textContent = seleccionado ? seleccionado.emoji : "🐻";
-    avatar.setAttribute("aria-label", seleccionado ? seleccionado.nombre : "Oso");
-    avatar.dataset.avatar = seleccionado ? seleccionado.id : "oso";
+    const seleccionado = buscarAvatar(avatarSeleccionado);
+    delete avatar.dataset.fallbackAplicado;
+    avatar.src = seleccionado.ruta;
+    avatar.alt = `Avatar de ${seleccionado.nombre}`;
+    avatar.dataset.avatar = seleccionado.id;
+    avatar.dataset.avatarLegado = seleccionado.legacyId;
     avatar.classList.add("avatar-animado");
+    avatar.classList.add("avatar-imagen");
   }
   const badgeEspectador = document.getElementById("badge-espectador");
   if (badgeEspectador) badgeEspectador.classList.toggle("hidden", !esEspectador);
@@ -761,7 +897,7 @@ function actualizarSala(msg) {
     esAnfitrion = !!miJugador.es_anfitrion;
     actualizarInfoUsuario();
   }
-  aplicarConfiguracionSala(msg.configuracion || { rondas: 4, categorias: CATEGORIAS, min_categorias: 3 }, msg.estado);
+  aplicarConfiguracionSala(msg.configuracion || { rondas: 4, categorias: [...CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA], min_categorias: 3 }, msg.estado);
 
   // Contador
   const contador = document.getElementById("contador-jugadores");
@@ -774,12 +910,13 @@ function actualizarSala(msg) {
     jugadores.forEach((j) => {
       const li = document.createElement("li");
       li.className = `item-jugador ${j.id === miId ? "es-yo" : ""}`;
+      const presencia = (j.estado_presencia || (j.conectado === false ? "Desconectado" : "Conectado"))
+        .replace(/^[^\p{L}\p{N}]+/u, "");
       li.innerHTML = `
         <div class="jugador-info-izq">
           <span class="${j.conectado === false ? "dot-desconectado" : "dot-verde"}">●</span>
-          ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}
-          ${renderizarEmocion(j.emocion)}
-          <span>${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""} · ${escaparHtml(j.estado_presencia || (j.conectado === false ? "🔴 Desconectado" : "🟢 Conectado"))}</span>
+          ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id, j.emocion, j.emocion_evento)}
+          <span class="jugador-nombre-presencia"><strong>${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}</strong><small>${escaparHtml(presencia)}</small></span>
           ${j.es_anfitrion ? '<span class="badge-host">👑 Anfitrión</span>' : ""}
         </div>
         <div class="pts-total-badge">${j.total || 0} pts</div>
@@ -814,23 +951,104 @@ function actualizarSala(msg) {
   }
 }
 
+function actualizarMetadatosCategorias(info = []) {
+  if (!Array.isArray(info) || !info.length) return;
+  info.forEach((item) => {
+    if (!item || !item.id) return;
+    const existente = METADATOS_CATEGORIAS.find((meta) => meta.id === item.id);
+    if (existente) {
+      Object.assign(existente, item);
+    } else {
+      METADATOS_CATEGORIAS.push({ ...item });
+    }
+  });
+}
+
+function renderizarCategoriasConfigurables(disponibles = [], activas = [], editable = false) {
+  const contenedor = document.getElementById("config-categorias");
+  if (!contenedor) return;
+  actualizarMetadatosCategorias(disponibles);
+  contenedor.innerHTML = "";
+  disponibles.forEach((meta) => {
+    if (!meta?.id) return;
+    const label = document.createElement("label");
+    label.title = meta.descripcion || (meta.personalizada
+      ? "Categoría personalizada: las respuestas que cumplan la letra pasan siempre a votación."
+      : "Si el catálogo no reconoce una respuesta que empieza con la letra, pasa a votación y no se rechaza automáticamente.");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = meta.id;
+    const siempreActiva = meta.id === CATEGORIA_SIEMPRE_ACTIVA;
+    input.checked = siempreActiva || activas.includes(meta.id);
+    input.disabled = !editable || siempreActiva;
+    if (siempreActiva) {
+      input.setAttribute("aria-label", `${meta.nombre}, siempre activa`);
+      label.title = "Esta categoría está siempre activa en todas las partidas.";
+    }
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(` ${meta.nombre}${meta.personalizada ? " 🗳️" : ""}`));
+    contenedor.appendChild(label);
+  });
+}
+
+function renderizarCamposCategorias() {
+  const contenedor = document.getElementById("contenedor-campos-categorias");
+  if (!contenedor) return;
+  contenedor.innerHTML = "";
+  categoriasActivas.forEach((categoria, indice) => {
+    const nombre = etiquetaCategoria(categoria);
+    const campo = document.createElement("div");
+    campo.className = "campo-categoria";
+    campo.dataset.cat = categoria;
+    campo.innerHTML = `
+      <label for="cat-${escaparHtml(categoria)}">${indice + 1}. ${escaparHtml(nombre)}</label>
+      <input type="text" id="cat-${escaparHtml(categoria)}" class="input-categoria" placeholder="Escribe una respuesta..." autocomplete="off">
+    `;
+    contenedor.appendChild(campo);
+    const input = campo.querySelector("input");
+    input.addEventListener("input", enviarRespuestasTiempoReal);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") enviarStop();
+    });
+  });
+}
+
 function aplicarConfiguracionSala(config, estado) {
   const selector = document.getElementById("config-rondas");
-  const checks = [...document.querySelectorAll("#config-categorias input[type=checkbox]")];
-  if (!selector || !checks.length) return;
-  categoriasActivas = config.categorias || [...CATEGORIAS];
-  selector.value = String(config.rondas || 4);
+  if (!selector) return;
+  categoriasActivas = Array.isArray(config.categorias)
+    ? [...new Set([...config.categorias, CATEGORIA_SIEMPRE_ACTIVA])]
+    : [...CATEGORIAS, CATEGORIA_SIEMPRE_ACTIVA];
+  actualizarMetadatosCategorias(config.categorias_disponibles || config.categorias_info || []);
+  const disponibles = config.categorias_disponibles || METADATOS_CATEGORIAS;
   const editable = esAnfitrion && estado === "SALA";
+  selector.value = String(config.rondas || 4);
   selector.disabled = !editable;
-  checks.forEach((check) => {
-    check.checked = categoriasActivas.includes(check.value);
-    check.disabled = !editable;
-  });
+  renderizarCategoriasConfigurables(disponibles, categoriasActivas, editable);
   const boton = document.getElementById("btn-guardar-configuracion");
   if (boton) boton.disabled = !editable;
+  const botonAgregar = document.getElementById("btn-agregar-categoria");
+  if (botonAgregar) botonAgregar.disabled = !editable;
+  const inputNueva = document.getElementById("input-nueva-categoria");
+  if (inputNueva) inputNueva.disabled = !editable;
   const resumen = document.getElementById("resumen-configuracion");
-  if (resumen) resumen.textContent = `${config.rondas || 4} rondas · ${categoriasActivas.map((c) => c[0].toUpperCase() + c.slice(1)).join(", ")}`;
+  if (resumen) resumen.textContent = `${config.rondas || 4} rondas · ${categoriasActivas.map(etiquetaCategoria).join(", ")}`;
   actualizarVisibilidadCategorias();
+}
+
+function agregarCategoriaPersonalizada() {
+  if (!esAnfitrion || estadoJuego !== "SALA") {
+    mostrarToast("Solo el anfitrión puede agregar categorías antes de iniciar.", "error");
+    return;
+  }
+  const input = document.getElementById("input-nueva-categoria");
+  const nombre = input?.value?.trim();
+  if (!nombre || nombre.length < 2 || nombre.length > 40) {
+    mostrarToast("La categoría debe tener entre 2 y 40 caracteres.", "error");
+    return;
+  }
+  enviarMensaje({ tipo: "agregar_categoria", nombre });
+  input.value = "";
 }
 
 function guardarConfiguracion() {
@@ -843,8 +1061,8 @@ function guardarConfiguracion() {
     error.classList.remove("hidden");
     return;
   }
-  if (categorias.length < 3) {
-    error.textContent = "Activa al menos 3 categorías para iniciar.";
+  if (categorias.length < 3 || categorias.length > 12) {
+    error.textContent = "Activa entre 3 y 12 categorías para iniciar.";
     error.classList.remove("hidden");
     return;
   }
@@ -852,13 +1070,7 @@ function guardarConfiguracion() {
 }
 
 function actualizarVisibilidadCategorias() {
-  CATEGORIAS.forEach((categoria) => {
-    const campo = document.getElementById(`cat-${categoria}`)?.closest(".campo-categoria");
-    if (campo) campo.classList.toggle("hidden", !categoriasActivas.includes(categoria));
-    document.querySelectorAll(`[data-cat="${categoria}"]`).forEach((celda) => {
-      celda.style.display = categoriasActivas.includes(categoria) ? "" : "none";
-    });
-  });
+  renderizarCamposCategorias();
 }
 
 function actualizarJugadoresEnPartida(jugadores, espectadores = []) {
@@ -874,7 +1086,7 @@ function actualizarJugadoresEnPartida(jugadores, espectadores = []) {
     const estado = j.estado_presencia || j.estado || `${j.total || 0} pts`;
     const desconectado = j.conectado === false;
     li.innerHTML = `
-      <span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${etiquetaYo}${host}${desconectado ? " · Desconectado" : ""}</span>
+      <span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id, j.emocion, j.emocion_evento)}${escaparHtml(j.nombre)}${etiquetaYo}${host}${desconectado ? " · Desconectado" : ""}</span>
       <strong class="${desconectado ? "texto-muted" : "puntos-verde"}">${escaparHtml(estado)}</strong>
     `;
     lista.appendChild(li);
@@ -882,13 +1094,14 @@ function actualizarJugadoresEnPartida(jugadores, espectadores = []) {
   espectadores.forEach((e) => {
     const li = document.createElement("li");
     li.className = "item-jugador-simple";
-    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id)}${renderizarEmocion(e.emocion)}${escaparHtml(e.nombre)}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
+    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id, e.emocion, e.emocion_evento)}${escaparHtml(e.nombre)}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
     lista.appendChild(li);
   });
 }
 
 function iniciarPantallaJuego(msg) {
   const yaEstabaEnJuego = estadoJuego === "JUEGO";
+  if (msg.categorias_info) actualizarMetadatosCategorias(msg.categorias_info);
   if (msg.categorias) categoriasActivas = msg.categorias;
   actualizarVisibilidadCategorias();
   const letra = msg.letra || "?";
@@ -903,7 +1116,7 @@ function iniciarPantallaJuego(msg) {
   bloquearCamposRonda(esEspectador);
 
   // Limpiar campos de texto
-  CATEGORIAS.forEach((cat) => {
+  categoriasActivas.forEach((cat) => {
     const input = document.getElementById(`cat-${cat}`);
     if (input) {
       input.value = "";
@@ -911,7 +1124,7 @@ function iniciarPantallaJuego(msg) {
   });
 
   if (!esEspectador && msg.mis_respuestas) {
-    CATEGORIAS.forEach((cat) => {
+    categoriasActivas.forEach((cat) => {
       const input = document.getElementById(`cat-${cat}`);
       if (input) input.value = msg.mis_respuestas[cat] || "";
     });
@@ -1013,7 +1226,7 @@ function detenerTemporizadorVisual() {
 }
 
 function bloquearCamposRonda(bloquear = true) {
-  CATEGORIAS.forEach((cat) => {
+  categoriasActivas.forEach((cat) => {
     const input = document.getElementById(`cat-${cat}`);
     if (input) input.disabled = bloquear;
   });
@@ -1026,6 +1239,9 @@ function etiquetaResultadoRespuesta(detalle, puntos) {
     return `⚠️ Repetida +${puntos}`;
   }
   if (puntos > 0) return `✅ Correcta +${puntos}`;
+  if (detalle.estado === "votacion_rechazada") return "❌ Rechazada por votación +0";
+  if (detalle.estado === "letra_incorrecta") return "❌ No empieza con la letra +0";
+  if (detalle.estado === "vacia") return "⚪ Sin respuesta +0";
   return "❌ No válida +0";
 }
 
@@ -1061,7 +1277,7 @@ function mostrarPantallaVotacion(msg) {
     card.innerHTML = `
       <div class="votacion-cabecera">
         <div>
-          <span class="badge-categoria-votacion">${ETIQUETAS_CATEGORIA[candidato.categoria] || candidato.categoria}</span>
+          <span class="badge-categoria-votacion">${etiquetaCategoria(candidato.categoria)}</span>
           <h2>"${escaparHtml(candidato.respuesta)}"</h2>
           <p class="texto-muted">¿Aceptar esta respuesta? · De: ${autores}</p>
         </div>
@@ -1102,13 +1318,13 @@ function actualizarJugadoresEnVotacion(jugadores, espectadores) {
     const disconnected = j.conectado === false;
     const presencia = j.estado_presencia || (disconnected ? "🔴 Desconectado" : "🟢 Conectado");
     const estado = disconnected ? presencia : `${presencia} · ${j.estado || "En votación"}`;
-    li.innerHTML = `<span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${host}${j.id === miId ? " (TÚ)" : ""}</span><strong class="${disconnected ? "texto-muted" : "puntos-verde"}">${escaparHtml(estado)}</strong>`;
+    li.innerHTML = `<span>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id, j.emocion, j.emocion_evento)}${escaparHtml(j.nombre)}${host}${j.id === miId ? " (TÚ)" : ""}</span><strong class="${disconnected ? "texto-muted" : "puntos-verde"}">${escaparHtml(estado)}</strong>`;
     lista.appendChild(li);
   });
   espectadores.forEach((e) => {
     const li = document.createElement("li");
     li.className = "item-jugador-simple";
-    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id)}${renderizarEmocion(e.emocion)}${escaparHtml(e.nombre)}${e.id === miId ? " (TÚ)" : ""}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
+    li.innerHTML = `<span>👀 ${renderizarAvatar(e.avatar || "🐻", "avatar-jugador", e.id, e.emocion, e.emocion_evento)}${escaparHtml(e.nombre)}${e.id === miId ? " (TÚ)" : ""}</span><strong class="texto-muted">${escaparHtml(e.estado_presencia || "👀 Espectador")}</strong>`;
     lista.appendChild(li);
   });
 }
@@ -1132,7 +1348,13 @@ function animarResultadosProgresivamente(animar) {
     etiqueta.textContent = "⏳ Calculando...";
     const retraso = indice * 20;
     temporizadoresResultado.push(setTimeout(() => {
-      etiqueta.textContent = puntos > 0 ? "✅ Respuesta aceptada" : "❌ Respuesta no válida";
+      etiqueta.textContent = puntos > 0
+        ? "✅ Respuesta aceptada"
+        : etiqueta.dataset.estado === "votacion_rechazada"
+        ? "❌ Rechazada por votación"
+        : etiqueta.dataset.estado === "vacia"
+        ? "⚪ Sin respuesta"
+        : "❌ No empieza con la letra";
       etiqueta.classList.add("resultado-actualizando");
     }, 260 + retraso));
     temporizadoresResultado.push(setTimeout(() => {
@@ -1143,6 +1365,7 @@ function animarResultadosProgresivamente(animar) {
 }
 
 function mostrarPantallaResultados(msg, animar = true) {
+  if (msg.categorias_info) actualizarMetadatosCategorias(msg.categorias_info);
   if (msg.categorias) categoriasActivas = msg.categorias;
   actualizarVisibilidadCategorias();
   const letra = msg.letra || "";
@@ -1150,6 +1373,16 @@ function mostrarPantallaResultados(msg, animar = true) {
   const quienStop = msg.quien_stop || "Un jugador";
   const jugadores = msg.jugadores || [];
   const historialGlobal = msg.historial_global || [];
+
+  const encabezadoResultados = document.getElementById("encabezado-resultados");
+  if (encabezadoResultados) {
+    encabezadoResultados.innerHTML = [
+      "<th>Jugador</th>",
+      ...categoriasActivas.map((categoria) => `<th data-cat="${escaparHtml(categoria)}">${escaparHtml(etiquetaCategoria(categoria))}</th>`),
+      "<th>Puntos de la ronda</th>",
+      "<th>Total acumulado</th>",
+    ].join("");
+  }
 
   // Actualizar rol anfitrión
   const miJugador = jugadores.find((j) => j.id === miId);
@@ -1190,14 +1423,12 @@ function mostrarPantallaResultados(msg, animar = true) {
         return `<div>${escaparHtml(respuesta)}</div><small class="${clase} resultado-progresivo" data-estado="${escaparHtml(d.estado || "")}" data-puntos="${puntos}">${etiqueta}</small>`;
       };
 
+      const celdasCategorias = categoriasActivas.map((categoria) =>
+        `<td data-cat="${escaparHtml(categoria)}">${celdaRespuesta(categoria)}</td>`
+      ).join("");
       tr.innerHTML = `
-        <td><strong>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}</strong><small class="texto-muted">${escaparHtml(j.estado_presencia || (j.conectado === false ? "🔴 Desconectado" : "🟢 Conectado"))}</small></td>
-        <td data-cat="nombre">${celdaRespuesta("nombre")}</td>
-        <td data-cat="apellido">${celdaRespuesta("apellido")}</td>
-        <td data-cat="ciudad">${celdaRespuesta("ciudad")}</td>
-        <td data-cat="fruta">${celdaRespuesta("fruta")}</td>
-        <td data-cat="animal">${celdaRespuesta("animal")}</td>
-        <td data-cat="cosa">${celdaRespuesta("cosa")}</td>
+        <td><strong>${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id, j.emocion, j.emocion_evento)}${escaparHtml(j.nombre)} ${j.id === miId ? "(TÚ)" : ""}</strong><small class="texto-muted">${escaparHtml(j.estado_presencia || (j.conectado === false ? "🔴 Desconectado" : "🟢 Conectado"))}</small></td>
+        ${celdasCategorias}
         <td>
           <span class="pts-ronda-badge" data-player-id="${Number(j.id)}" data-puntos="${Number(j.puntos_ronda) || 0}">+${j.puntos_ronda || 0}</span>
           <small class="${j.bonus_ronda ? "bonus-ronda-label" : ""}">${j.puntos_categorias ?? j.puntos_ronda ?? 0} puntos de categorías${j.bonus_ronda ? ` · 🔥 RONDA PERFECTA · +${j.bonus_ronda} BONUS` : ""}</small>
@@ -1220,7 +1451,7 @@ function mostrarPantallaResultados(msg, animar = true) {
       item.dataset.playerId = String(j.id);
       const medalla = indice === 0 ? "🥇" : indice === 1 ? "🥈" : indice === 2 ? "🥉" : `${indice + 1}.`;
       item.innerHTML = `
-        <span>${medalla} ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id)}${renderizarEmocion(j.emocion)}${escaparHtml(j.nombre)}${j.id === miId ? " (TÚ)" : ""}</span>
+        <span>${medalla} ${renderizarAvatar(j.avatar || "🐻", "avatar-jugador", j.id, j.emocion, j.emocion_evento)}${escaparHtml(j.nombre)}${j.id === miId ? " (TÚ)" : ""}</span>
         <strong class="pts-total-badge">${j.total || 0} pts</strong>
       `;
       contClasificacion.appendChild(item);
@@ -1270,6 +1501,8 @@ function mostrarPantallaResultados(msg, animar = true) {
   const titulo = document.getElementById("titulo-resultados");
   const tituloAccion = document.getElementById("titulo-accion-resultados");
   const estadisticas = document.getElementById("estadisticas-partida");
+  const pantallaResultados = document.getElementById("pantalla-resultados");
+  if (pantallaResultados) pantallaResultados.classList.toggle("partida-final", partidaTerminada);
   if (titulo) titulo.textContent = partidaTerminada ? "🏁 PARTIDA TERMINADA" : "RESULTADOS DE LA RONDA";
   if (tituloAccion) tituloAccion.textContent = partidaTerminada ? "Partida finalizada" : "Próxima Ronda";
   if (estadisticas) {
@@ -1325,9 +1558,9 @@ function renderizarPodio(ranking, partidaTerminada) {
   if (!partidaTerminada) return;
 
   const puestos = [
-    { lugar: 1, medalla: "🥇", etiqueta: "Primer lugar", clase: "podio-puesto-1" },
-    { lugar: 2, medalla: "🥈", etiqueta: "Segundo lugar", clase: "podio-puesto-2" },
-    { lugar: 3, medalla: "🥉", etiqueta: "Tercer lugar", clase: "podio-puesto-3" },
+    { lugar: 1, etiqueta: "Primer lugar", clase: "podio-puesto-1" },
+    { lugar: 2, etiqueta: "Segundo lugar", clase: "podio-puesto-2" },
+    { lugar: 3, etiqueta: "Tercer lugar", clase: "podio-puesto-3" },
   ];
   puestos.forEach((puesto) => {
     const jugador = ranking[puesto.lugar - 1];
@@ -1336,9 +1569,10 @@ function renderizarPodio(ranking, partidaTerminada) {
     tarjeta.className = `podio-puesto ${puesto.clase}${puesto.lugar === 1 ? " podio-ganador" : ""}`;
     tarjeta.setAttribute("aria-label", `${puesto.etiqueta}: ${jugador.nombre}, ${jugador.total || 0} puntos`);
     tarjeta.innerHTML = `
-      <span class="podio-medalla">${puesto.medalla}</span>
-      ${puesto.lugar === 1 ? '<span class="podio-corona" aria-label="Ganador">👑 Ganador</span>' : ""}
-      <span class="podio-personaje">${renderizarAvatar(jugador.avatar || "🐻", "avatar-podio", jugador.id)}</span>
+      <span class="podio-celebracion">
+        <span class="podio-medalla" aria-hidden="true">👑</span>
+        <span class="podio-personaje">${renderizarAvatar(jugador.avatar || "🐻", "avatar-podio", jugador.id, jugador.emocion, jugador.emocion_evento)}</span>
+      </span>
       <strong>${escaparHtml(jugador.nombre)}</strong>
       <span class="podio-puntos">${Number(jugador.total || 0).toLocaleString("es-CO")} pts</span>
     `;
@@ -1389,7 +1623,7 @@ function renderizarPerfilTemporal(msg) {
 function contenidoPerfil(perfil, miJugador) {
   const logros = (perfil.logros || []).map((logro) => `<span class="chip-logro" title="${escaparHtml(logro.descripcion || "")}">${logro.icono} ${escaparHtml(logro.nombre)}</span>`).join("");
   return `
-    ${renderizarAvatar(miJugador?.avatar || AVATARES.find((opcion) => opcion.id === avatarSeleccionado)?.emoji || "🐻", "perfil-avatar", miId)}
+    ${renderizarAvatar(miJugador?.avatar || avatarSeleccionado, "perfil-avatar", miId, miJugador?.emocion, miJugador?.emocion_evento)}
     <div class="perfil-contenido">
       <div class="perfil-titulo"><span>👤 ${escaparHtml(perfil.nombre)}</span><strong>${Number(perfil.puntos || 0).toLocaleString("es-CO")} pts</strong></div>
       <div class="perfil-metricas">
@@ -1520,21 +1754,44 @@ window.addEventListener("DOMContentLoaded", () => {
   renderizarReacciones();
   alternarCamposCodigoSala();
   actualizarInfoUsuario();
-  const botonSonido = document.getElementById("btn-sonido");
-  if (botonSonido) {
-    botonSonido.textContent = sonidoActivado ? "🔊 Sonidos activados" : "🔇 Sonidos desactivados";
-    botonSonido.setAttribute("aria-pressed", String(sonidoActivado));
-  }
+  actualizarControlSonido();
   actualizarControlMusica();
-  const controlVolumen = document.getElementById("volumen-audio");
-  if (controlVolumen) {
-    controlVolumen.value = String(Math.round(volumenAudio * 100));
-    controlVolumen.addEventListener("input", () => actualizarVolumenAudio(controlVolumen.value));
+  reproductorMusica = document.getElementById("musica-fondo");
+  if (reproductorMusica) reproductorMusica.volume = volumenMusica;
+  const controlVolumenMusica = document.getElementById("volumen-musica");
+  if (controlVolumenMusica) {
+    controlVolumenMusica.value = String(Math.round(volumenMusica * 100));
+    controlVolumenMusica.addEventListener("input", () => {
+      actualizarVolumenMusica(controlVolumenMusica.value);
+      programarOcultarControlVolumen("musica");
+    });
   }
-  window.addEventListener("click", () => {
-    if (musicaActivada) iniciarMusicaConcentracion();
-  }, { once: true });
-  CATEGORIAS.forEach((cat) => {
+  const controlVolumenSonido = document.getElementById("volumen-sonido");
+  if (controlVolumenSonido) {
+    controlVolumenSonido.value = String(Math.round(volumenSonido * 100));
+    controlVolumenSonido.addEventListener("input", () => {
+      actualizarVolumenSonido(controlVolumenSonido.value);
+      programarOcultarControlVolumen("sonido");
+    });
+  }
+  const desbloquearPorInteraccion = () => {
+    if (sonidoActivado && (!audioContext || audioContext.state !== "running")) {
+      desbloquearAudio();
+    }
+    if (musicaActivada && reproductorMusica?.paused) {
+      iniciarMusicaFondo();
+    }
+  };
+  // Reintentar en interacciones posteriores es importante si el navegador rechazó el primer intento.
+  ["pointerdown", "touchstart", "keydown"].forEach((evento) => {
+    window.addEventListener(evento, desbloquearPorInteraccion, { passive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && musicaActivada && reproductorMusica?.paused) {
+      iniciarMusicaFondo();
+    }
+  });
+  categoriasActivas.forEach((cat) => {
     const input = document.getElementById(`cat-${cat}`);
     if (input) {
       input.addEventListener("input", enviarRespuestasTiempoReal);

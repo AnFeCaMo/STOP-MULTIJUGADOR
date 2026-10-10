@@ -5,9 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>STOP Multijugador Web</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20261009-login-code1">
 </head>
 <body>
+
+  <audio id="musica-fondo" src="/audio/background.mp3" loop preload="none"></audio>
+  <aside id="controles-audio-globales" class="controles-audio-globales" aria-label="Controles de música y sonidos">
+    <div class="badge-mi-usuario hidden" aria-live="polite">
+      <img class="user-avatar avatar-imagen" id="avatar-mi-usuario" alt="Avatar del jugador">
+      <div>
+        <div class="user-nombre" id="label-mi-nombre">Mi Nombre</div>
+        <div class="user-rol" id="label-mi-rol">Jugador</div>
+      </div>
+    </div>
+    <div class="control-audio-global">
+      <button id="btn-sonido" class="btn btn-secundario" type="button" onclick="alternarSonido()" aria-pressed="true" aria-controls="panel-volumen-sonido" aria-expanded="false">🔊 Sonidos activados</button>
+      <div id="panel-volumen-sonido" class="panel-volumen-audio" hidden>
+        <label for="volumen-sonido">Volumen de sonidos</label>
+        <input id="volumen-sonido" type="range" min="0" max="100" value="35" aria-label="Volumen de sonidos">
+      </div>
+    </div>
+    <div class="control-audio-global">
+      <button id="btn-musica" class="btn btn-secundario" type="button" onclick="alternarMusica()" aria-pressed="true" aria-controls="panel-volumen-musica" aria-expanded="false">🎵 Música activada</button>
+      <div id="panel-volumen-musica" class="panel-volumen-audio" hidden>
+        <label for="volumen-musica">Volumen de música</label>
+        <input id="volumen-musica" type="range" min="0" max="100" value="35" aria-label="Volumen de música">
+      </div>
+    </div>
+  </aside>
 
   <!-- Alerta flotante de estado / error -->
   <div id="toast" class="toast hidden"></div>
@@ -40,13 +65,6 @@
         <div class="badge-logo">STOP</div>
         <h1 class="titulo-principal">STOP MULTIJUGADOR</h1>
         <p class="subtitulo">Demostración Académica Cliente-Servidor Web</p>
-        <button id="btn-sonido" class="btn btn-secundario btn-sonido" type="button" onclick="alternarSonido()" aria-pressed="true">🔊 Sonidos activados</button>
-        <div class="controles-audio">
-          <button id="btn-musica" class="btn btn-secundario" type="button" onclick="alternarMusica()" aria-pressed="true">🎵 Música activada</button>
-          <label for="volumen-audio">🔉 Volumen general</label>
-          <input id="volumen-audio" type="range" min="0" max="100" value="35" aria-label="Volumen general">
-        </div>
-
         <form id="form-login" class="form-login" onsubmit="event.preventDefault(); entrarAlJuego();">
           <label for="input-nombre" class="label-input">Nombre del jugador:</label>
           <input type="text" id="input-nombre" class="input-texto" placeholder="Ej: Andrés" maxlength="20" autofocus required autocomplete="off">
@@ -65,8 +83,9 @@
           <fieldset class="selector-avatares">
             <legend class="label-input">Elige tu personaje:</legend>
             <div id="opciones-avatares" class="opciones-avatares" role="group" aria-label="Personajes disponibles"></div>
+            <small class="texto-muted">El avatar seleccionado se confirma al entrar a la sala. Los retratos y expresiones usan la tabla local proporcionada para el proyecto.</small>
           </fieldset>
-          
+
           <button type="submit" id="btn-entrar" class="btn btn-primario">
             <span>ENTRAR A LA SALA</span>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
@@ -88,13 +107,6 @@
           <p class="subtitulo">Esperando jugadores para comenzar la partida...</p>
           <p class="codigo-sala-activo">Código para invitar: <strong id="codigo-sala-activo">----</strong></p>
         </div>
-        <div class="badge-mi-usuario">
-          <span class="user-avatar" id="avatar-mi-usuario">A</span>
-          <div>
-            <div class="user-nombre" id="label-mi-nombre">Mi Nombre</div>
-            <div class="user-rol" id="label-mi-rol">Jugador</div>
-          </div>
-        </div>
       </header>
 
       <div class="layout-dos-columnas">
@@ -111,14 +123,6 @@
         <!-- Panel de Control y Reglas -->
         <div class="card panel-info">
           <h2>Información de la Partida</h2>
-          <div class="info-host-box">
-            <span class="corona-icon">👑</span>
-            <div>
-              <span class="info-host-label">Anfitrión actual:</span>
-              <strong id="nombre-anfitrion" class="info-host-nombre">Esperando...</strong>
-            </div>
-          </div>
-
           <div class="reglas-box">
             <h3>Reglas del STOP:</h3>
             <ul>
@@ -129,7 +133,7 @@
               <li><strong>5 pts:</strong> Palabra válida pero repetida.</li>
               <li><strong>0 pts:</strong> Palabra vacía o que no empieza con la letra.</li>
               <li>Si el sistema reconoce una respuesta, se valida automáticamente.</li>
-              <li>Si no la reconoce pero comienza con la letra, los jugadores la validan por votación.</li>
+              <li>Si no la reconoce pero comienza con la letra, pasa a votación; el sistema nunca la rechaza por no conocerla.</li>
             </ul>
           </div>
 
@@ -141,14 +145,15 @@
               <option>8</option><option>9</option><option>10</option>
             </select>
             <p id="error-config-rondas" class="texto-aviso hidden" role="alert"></p>
-            <p>Categorías (mínimo 3):</p>
-            <div id="config-categorias" class="config-categorias">
-              <label><input type="checkbox" value="nombre" checked> Nombre</label>
-              <label><input type="checkbox" value="apellido" checked> Apellido</label>
-              <label><input type="checkbox" value="ciudad" checked> Ciudad</label>
-              <label><input type="checkbox" value="fruta" checked> Fruta</label>
-              <label><input type="checkbox" value="animal" checked> Animal</label>
-              <label><input type="checkbox" value="cosa" checked> Cosa</label>
+            <p>Categorías (mínimo 3, máximo 12):</p>
+            <div id="config-categorias" class="config-categorias"></div>
+            <div class="agregar-categoria-personalizada">
+              <label for="input-nueva-categoria">Agregar categoría personalizada:</label>
+              <div class="fila-agregar-categoria">
+                <input id="input-nueva-categoria" class="input-texto" type="text" maxlength="40" placeholder="Ej.: Superhéroe, profesión, película..." autocomplete="off">
+                <button id="btn-agregar-categoria" class="btn btn-secundario" type="button" onclick="agregarCategoriaPersonalizada()">+ AGREGAR</button>
+              </div>
+              <small class="texto-muted">Las categorías personalizadas no se validan con diccionario: si cumplen la letra, siempre pasan a votación.</small>
             </div>
             <button id="btn-guardar-configuracion" class="btn btn-secundario" type="button" onclick="guardarConfiguracion()">GUARDAR CONFIGURACIÓN</button>
             <p id="resumen-configuracion" class="texto-muted"></p>
@@ -172,66 +177,32 @@
           <h1 class="titulo-juego">STOP MULTIJUGADOR</h1>
         </div>
 
-        <!-- Tarjeta de Letra de la Ronda -->
-        <div class="tarjeta-letra">
-          <span class="letra-label">LETRA</span>
-          <span class="letra-valor" id="letra-ronda">?</span>
-        </div>
+        <div class="header-estadisticas-ronda">
+          <!-- Tarjeta de Letra de la Ronda -->
+          <div class="tarjeta-letra">
+            <span class="letra-label">LETRA</span>
+            <span class="letra-valor" id="letra-ronda">?</span>
+          </div>
 
-        <div class="tarjeta-temporizador" aria-live="polite">
-          <span class="total-label">TIEMPO</span>
-          <span class="temporizador-valor" id="temporizador-ronda">01:00</span>
-          <span id="aviso-temporizador" class="aviso-temporizador hidden" aria-hidden="true"></span>
-          <span id="cuenta-regresiva" class="cuenta-regresiva hidden" aria-live="assertive"></span>
-        </div>
+          <div class="tarjeta-temporizador" aria-live="polite">
+            <span class="total-label">TIEMPO</span>
+            <span class="temporizador-valor" id="temporizador-ronda">01:00</span>
+            <span id="aviso-temporizador" class="aviso-temporizador hidden" aria-hidden="true"></span>
+            <span id="cuenta-regresiva" class="cuenta-regresiva hidden" aria-live="assertive"></span>
+          </div>
 
-        <!-- Total acumulado del jugador -->
-        <div class="tarjeta-total-superior">
-          <span class="total-label">MI TOTAL</span>
-          <span class="total-valor" id="total-jugador-juego">0 pts</span>
+          <!-- Total acumulado del jugador -->
+          <div class="tarjeta-total-superior">
+            <span class="total-label">MI TOTAL</span>
+            <span class="total-valor" id="total-jugador-juego">0 pts</span>
+          </div>
         </div>
       </header>
 
       <div class="layout-juego">
         <!-- Formulario de Categorías -->
         <div class="card panel-formulario">
-          <div class="formulario-grid">
-            <div class="campo-categoria">
-              <label for="cat-nombre">1. Nombre</label>
-              <input type="text" id="cat-nombre" class="input-categoria" placeholder="Escribe un nombre..." autocomplete="off">
-            </div>
-
-            <div class="campo-categoria">
-              <label for="cat-apellido">2. Apellido</label>
-              <input type="text" id="cat-apellido" class="input-categoria" placeholder="Escribe un apellido..." autocomplete="off">
-            </div>
-
-            <div class="campo-categoria">
-              <label for="cat-ciudad">3. Ciudad</label>
-              <input type="text" id="cat-ciudad" class="input-categoria" placeholder="Escribe una ciudad..." autocomplete="off">
-            </div>
-
-            <div class="campo-categoria">
-              <label for="cat-fruta">4. Fruta</label>
-              <input type="text" id="cat-fruta" class="input-categoria" placeholder="Escribe una fruta..." autocomplete="off">
-            </div>
-
-            <div class="campo-categoria">
-              <label for="cat-animal">5. Animal</label>
-              <input type="text" id="cat-animal" class="input-categoria" placeholder="Escribe un animal..." autocomplete="off">
-            </div>
-
-            <div class="campo-categoria">
-              <label for="cat-cosa">6. Cosa</label>
-              <input type="text" id="cat-cosa" class="input-categoria" placeholder="Escribe una cosa u objeto..." autocomplete="off">
-            </div>
-          </div>
-
-          <div class="contenedor-btn-stop">
-            <button id="btn-stop" class="btn btn-stop" onclick="enviarStop()">
-              <span>¡STOP!</span>
-            </button>
-          </div>
+          <div id="contenedor-campos-categorias" class="formulario-grid" aria-live="polite"></div>
         </div>
 
         <!-- Sidebar de Jugadores en Partida -->
@@ -243,12 +214,10 @@
 
           <h3>Mi perfil temporal</h3>
           <div id="perfil-mi-jugador-ronda" class="perfil-mi-jugador perfil-en-partida" aria-live="polite"></div>
-
-          <div class="historial-resumen-box">
-            <h3>Historial de Rondas</h3>
-            <div id="lista-historial-personal" class="historial-personal-scroll">
-              <p class="texto-muted">Sin rondas finalizadas</p>
-            </div>
+          <div class="contenedor-btn-stop">
+            <button id="btn-stop" class="btn btn-stop" onclick="enviarStop()">
+              <span>¡STOP!</span>
+            </button>
           </div>
         </aside>
       </div>
@@ -265,7 +234,7 @@
         <div>
           <span class="badge-ronda" id="badge-ronda-votacion">Ronda 1</span>
           <h1 class="titulo-seccion">🗳️ VOTACIÓN</h1>
-          <p class="subtitulo">Las respuestas conocidas se validan automáticamente. Solo las que no reconoce el sistema, pero comienzan con la letra correcta, pasan a votación.</p>
+          <p class="subtitulo">Las respuestas conocidas se validan automáticamente. Toda respuesta que empiece con la letra y no esté reconocida pasa a votación; el sistema no la rechaza por desconocerla.</p>
         </div>
         <div class="banner-stop-quien" id="banner-stop-votacion">¡STOP!</div>
       </header>
@@ -297,17 +266,7 @@
         <div class="tabla-scroll">
           <table class="tabla-stop">
             <thead>
-              <tr>
-                <th>Jugador</th>
-                <th data-cat="nombre">Nombre</th>
-                <th data-cat="apellido">Apellido</th>
-                <th data-cat="ciudad">Ciudad</th>
-                <th data-cat="fruta">Fruta</th>
-                <th data-cat="animal">Animal</th>
-                <th data-cat="cosa">Cosa</th>
-                <th>Puntos de la ronda</th>
-                <th>Total acumulado</th>
-              </tr>
+              <tr id="encabezado-resultados"></tr>
             </thead>
             <tbody id="tbody-resultados">
               <!-- Renderizado de filas -->
@@ -324,10 +283,6 @@
             <p class="texto-muted">La clasificación aparecerá al terminar la ronda.</p>
           </div>
           <div id="podio-final" class="podio-final hidden" aria-label="Podio final de la partida"></div>
-          <h2 style="margin-top:24px;">HISTORIAL DE LA PARTIDA</h2>
-          <div id="contenedor-historial-completo" class="historial-completo-lista">
-            <!-- Rondas anteriores -->
-          </div>
         </div>
 
         <div class="card panel-acciones-resultados">
@@ -365,6 +320,7 @@
     Desarrollado por el Ing. Andrés Camacho y la Ing. Yulesi Carranza
   </footer>
 
-  <script src="app.js"></script>
+  <script src="avatar-catalog.js?v=20261009-dragonball2"></script>
+  <script src="app.js?v=20261009-color-siempre-activo1"></script>
 </body>
 </html>

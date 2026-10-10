@@ -131,6 +131,88 @@ DICCIONARIO_CATEGORIAS = {
 }
 
 
+# Catálogos JSON: conservan y amplían los diccionarios de Python sin hacer
+# que la validación dependa de Internet. Los JSON son una primera capa de
+# conocimiento; una respuesta desconocida que cumple la letra siempre pasa
+# a votación humana.
+from pathlib import Path
+import json
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
+def _cargar_catalogo_json(nombre_archivo: str) -> list[str]:
+    ruta = DATA_DIR / nombre_archivo
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+        if not isinstance(datos, list):
+            return []
+        return [str(item).strip() for item in datos if isinstance(item, str) and item.strip()]
+    except (OSError, ValueError, TypeError):
+        # El juego sigue funcionando con los diccionarios Python si un catálogo
+        # opcional no está disponible.
+        return []
+
+
+def _fusionar_catalogo_en_diccionario(diccionario: dict, palabras: list[str]) -> None:
+    for palabra in palabras:
+        normalizada = normalizar(palabra)
+        if not normalizada:
+            continue
+        letra = normalizada[0]
+        diccionario.setdefault(letra, []).append(palabra)
+    for letra, valores in diccionario.items():
+        vistos = set()
+        diccionario[letra] = [
+            valor for valor in valores
+            if not (normalizar(valor) in vistos or vistos.add(normalizar(valor)))
+        ]
+
+
+# Migración conservadora: se mantienen los diccionarios existentes y se les
+# agregan los catálogos externos. Así el comportamiento anterior no se pierde.
+_CATALOGOS_JSON = {
+    "nombre": "nombres.json",
+    "apellido": "apellidos.json",
+    "ciudad": "ciudades.json",
+    "fruta": "frutas.json",
+    "animal": "animales.json",
+    "cosa": "cosas.json",
+    "color": "colores.json",
+    "pais": "paises.json",
+    "capital": "capitales.json",
+    "departamento": "departamentos.json",
+    "continente": "continentes.json",
+}
+
+# Los cuatro catálogos geográficos forman una sola categoría jugable: Ciudad.
+_CATALOGOS_GEOGRAFICOS_CIUDAD = ("pais", "capital", "departamento", "continente")
+_CATALOGOS_ADICIONALES_FRUTA = ("tuberculos.json", "plantas.json")
+
+for _categoria, _archivo in _CATALOGOS_JSON.items():
+    _palabras = _cargar_catalogo_json(_archivo)
+    if _categoria == "nombre":
+        _fusionar_catalogo_en_diccionario(DICCIONARIO_NOMBRES, _palabras)
+    else:
+        _fusionar_catalogo_en_diccionario(DICCIONARIO_CATEGORIAS.setdefault(_categoria, {}), _palabras)
+
+for _categoria_geografica in _CATALOGOS_GEOGRAFICOS_CIUDAD:
+    _palabras_geograficas = _cargar_catalogo_json(_CATALOGOS_JSON[_categoria_geografica])
+    _fusionar_catalogo_en_diccionario(DICCIONARIO_CATEGORIAS["ciudad"], _palabras_geograficas)
+
+for _archivo_fruta in _CATALOGOS_ADICIONALES_FRUTA:
+    _palabras_fruta = _cargar_catalogo_json(_archivo_fruta)
+    _fusionar_catalogo_en_diccionario(DICCIONARIO_CATEGORIAS["fruta"], _palabras_fruta)
+
+# Los IDs antiguos se conservan para que datos previos sigan siendo legibles,
+# pero ya no se ofrecen como categorías independientes al configurar partidas.
+CATEGORIAS_CATALOGADAS = tuple(
+    categoria for categoria in _CATALOGOS_JSON
+    if categoria not in _CATALOGOS_GEOGRAFICOS_CIUDAD
+)
+
+
+
 def validar_palabra(categoria: str, palabra: str, letra: str) -> bool:
     """Compatibilidad con el código existente: solo devuelve si es automáticamente válida."""
     return evaluar_palabra(categoria, palabra, letra) == "valida"
